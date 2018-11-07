@@ -1,0 +1,29 @@
+Arduino makefile folder is from:
+https://github.com/thunderace/Esp8266-Arduino-Makefile
+
+
+% ------ UNIX install instructions: ---------- %
+
+- Install CPAN and YAML for perl:
+sudo perl -MCPAN -e shell
+o conf init
+sudo perl -MCPAN -e 'install Bundle::CPAN'
+sudo cpan YAML
+
+- Install Python2 and pyserial for Python2
+brew install python@2
+pip install pyserial
+
+
+% ----- Windows install instructions: -------- %
+TODO
+
+
+
+
+% ----- Usage -------------------------------- %
+Go into folder ESP32_NILM and call ...
+- make           to build program file
+- make upload    to build and upload file
+- make clean     to remove all binaries
+- make reset     to reset the ESP

@@ -2,9 +2,9 @@
 ARDUINO_VARIANT = node32s
 FLASH_FREQ = 80m
 UPLOAD_SPEED = 921600
-SERIAL_PORT = /dev/tty.SLAB_USBtoUART
+SERIAL_PORT = /dev/ttyUSB0
 # uncomment and set the right serail baud according to your sketch (default to 115200)
-SERIAL_BAUD = 115200
+SERIAL_BAUD = 2000000
 
 CFLAGS=-D UART0_BAUD
 
@@ -18,10 +18,12 @@ ARDUINO_ARCH=esp32
 
 #
 
-include ~/arduino-makefile/Esp8266-Arduino-Makefile/espXArduino.mk
+# include ~/arduino-makefile/Esp8266-Arduino-Makefile/espXArduino.mk
+include ../arduino-makefile/Esp8266-Arduino-Makefile/espXArduino.mk
 
 program: upload serial
 
 serial:
 	gnome-terminal -e "sh $(ROOT_DIR)/serial.sh $(SERIAL_PORT) $(SERIAL_BAUD)" --hide-menubar
+	#gnome-terminal -e "bash $(ROOT_DIR)/serial-tx.sh $(SERIAL_PORT) $(SERIAL_BAUD)" --hide-menubar
   # gnome-terminal -e "python SerialMonitor $(SERIAL_PORT) $(SERIAL_BAUD)" --hide-menubar
