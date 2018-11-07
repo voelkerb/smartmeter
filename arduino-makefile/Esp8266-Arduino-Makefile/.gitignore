@@ -1,0 +1,17 @@
+build.*/
+xtensa-lx106-elf
+xtensa-esp32-elf
+bin/espota.py
+bin/mkspiffs
+bin/esptool
+node_modules
+download
+esp8266
+esp8266-2.0.0
+esp8266-2.2.0
+esp8266-staging
+esp8266-2.3.0
+esp32
+esp8266.git
+arduino-esp32
+esp8266-*
