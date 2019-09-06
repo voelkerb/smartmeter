@@ -2,7 +2,7 @@
 ARDUINO_VARIANT = node32s
 FLASH_FREQ = 80m
 UPLOAD_SPEED = 921600
-SERIAL_PORT = /dev/ttyUSB0
+SERIAL_PORT = /dev/tty.SLAB_USBtoUART
 # uncomment and set the right serail baud according to your sketch (default to 115200)
 SERIAL_BAUD = 2000000
 

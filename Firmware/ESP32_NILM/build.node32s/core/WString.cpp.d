@@ -1,0 +1,34 @@
+build.node32s/core/WString.cpp.o: \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/cores/esp32/WString.cpp \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/cores/esp32/WString.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/stdlib.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/machine/ieeefp.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/_ansi.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/newlib.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/sys/config.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/sys/features.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/esp32/xtensa/config/core-isa.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/sys/reent.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/_ansi.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/sys/_types.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/machine/_types.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/machine/_default_types.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/sys/lock.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/sys/cdefs.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/machine/stdlib.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/alloca.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/string.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/sys/string.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/ctype.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/cores/esp32/pgmspace.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/cores/esp32/stdlib_noniso.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/cores/esp32/esp32-hal-log.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/config/sdkconfig.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/log/esp_log.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/stdint.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/sys/_intsup.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/esp32/rom/ets_sys.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/soc/soc/soc.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/esp32/esp_assert.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/newlib/assert.h \
+ /Users/benny/Documents/smartenergy.smartmeter/Firmware/arduino-makefile/Esp8266-Arduino-Makefile/esp32/tools/sdk/include/log/esp_log_internal.h

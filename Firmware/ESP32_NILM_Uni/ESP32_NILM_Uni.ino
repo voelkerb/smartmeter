@@ -14,7 +14,7 @@ ADE9000 *ADE9k;
 HardwareSerial Serial2(1);
 
 void setup() {
-  Serial.begin(2000000);
+  Serial.begin(2000000);//2000000
   Serial.println("\nInfo:Setup start");
   //Serial2.begin(2000000, SERIAL_8N1, 2, 0, false); // FTDI 12Mbaud
   ADE9k = new ADE9000(VSPI);

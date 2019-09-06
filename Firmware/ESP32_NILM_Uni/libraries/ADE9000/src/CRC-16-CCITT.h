@@ -4,6 +4,7 @@
 #ifndef CRC_16_CCITT_H_
 #define CRC_16_CCITT_H_
 
+#include <stdint.h>
 
 
 // leider funktioniert die CRC Berechnung des ESP32 (esp32/rom/crc.h) nicht wie

@@ -9,7 +9,6 @@
 #include <string.h>
 #include <Preferences.h>  // NVS
 
-
 #include "uart-parser.h"
 #include "ADE9000.h"
 #include "HardwareSerial.h"
@@ -358,6 +357,9 @@ void consumerTask( void * parameter) {
 // _____________________________________________________________________________
 void parseCommand(char *str) {
 
+  uart2->print("Info:PARSING: ");
+  uart2->println(str);
+
   if (strncmp(str, "start", 5) == 0 && !continuous_mode) {
 
     if(strcmp(&str[5], "4k") == 0) {
@@ -372,7 +374,8 @@ void parseCommand(char *str) {
       uart2->println("Info:start the 32kSps continuous RAW mode");
     }
     else {
-      uart2->println("Info:unknown sample rate");
+      uart2->print("Info:unknown sample rate: ");
+      uart2->println(&str[5]);
       uart2->println("Info:Usage: \"start8k\" or \"start32k\"");
       return;
     }
@@ -424,6 +427,9 @@ void parseCommand(char *str) {
     return;
   }
 
+  if ( strcmp(str, "?") == 0) {
+    uart2->println("Info:Setup done");
+  }
 
   if ( strcmp(str, "stop") == 0 || strcmp(str, "exit") == 0) {  // stoping continuous mode
     if(!continuous_mode)

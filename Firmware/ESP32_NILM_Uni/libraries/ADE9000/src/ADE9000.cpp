@@ -9,7 +9,7 @@
 #include <soc/spi_struct.h>
 
 // #include <esp32/rom/crc.h> // crc.h des ESP32 liefter falsche Ergebnisse
-#include "CRC-16-CCITT.h"  
+#include "CRC-16-CCITT.h"
 
 #include "esp32-hal-spi.h"
 
@@ -25,7 +25,7 @@
 struct spi_struct_t {
     spi_dev_t * dev;
 #if !CONFIG_DISABLE_HAL_LOCKS
-    xSemaphoreHandle lock;
+    SemaphoreHandle_t lock;
 #endif
     uint8_t num;
 };
@@ -135,7 +135,7 @@ void ADE9000::begin(int8_t sck, int8_t miso, int8_t mosi, int8_t ss) {
   //_spi->bus()->ctrl2.miso_delay_num = 0;
   //_spi->bus()->dev->ctrl2.miso_delay_num  = 0b1000;
   //_spi->bus()->dev->ctrl2.miso_delay_mode = 3;
- 
+
   // FIXME leider ist die Variablen _ss usw von der SPIClass private...
   if (sck == -1 && miso == -1 && mosi == -1 && ss == -1) {
     _ss = (_spi_num == VSPI) ? SS : 15;

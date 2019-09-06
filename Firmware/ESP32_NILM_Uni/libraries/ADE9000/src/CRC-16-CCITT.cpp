@@ -2,7 +2,6 @@
 
 #include "CRC-16-CCITT.h"
 
-
 static uint16_t crc_table[256] = {
   0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5,
   0x60c6, 0x70e7, 0x8108, 0x9129, 0xa14a, 0xb16b,
@@ -61,4 +60,3 @@ uint16_t CRCCCITT(uint8_t *data, uint16_t length, uint16_t seed, uint16_t final)
   }
   return (uint16_t)(crc ^ final);
 }
-
