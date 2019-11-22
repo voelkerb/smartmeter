@@ -1,0 +1,13 @@
+**/.vscode/
+
+**/*.mkv
+
+**/tmp_*
+
+**/.DS_Store
+
+# Eagle temporary board and schematic file
+**/*.b#*
+**/*.s#*
+
+

@@ -15,21 +15,16 @@
 #include <rom/rtc.h>
 
 #include "constDefine.h"
-#include "libraries/ADE9000.h"
-#include "libraries/relay.h"
-#include "libraries/rtc.h"
-#include "libraries/config.h"
-#include "libraries/ringbuffer.h"
-#include "libraries/network.h"
-#include "libraries/timeHandling.h"
-#include "libraries/logger.h"
+#include "src/ADE9000/ADE9000.h"
+#include "src/config/config.h"
+#include "src/ringbuffer/ringbuffer.h"
+#include "src/network/network.h"
+#include "src/rtc/rtc.h"
+#include "src/time/timeHandling.h"
+#include "src/logger/logger.h"
 
-
-TaskHandle_t xHandle = NULL;
-TaskHandle_t xHandleProducer = NULL;
-
-xQueueHandle xQueue;
-
+void isr_adc_ready();
+void IRAM_ATTR sqwvTriggered();
 
 // Serial logger
 StreamLogger serialLog((Stream*)&Serial, &timeStr, &LOG_PREFIX_SERIAL[0], ALL);
@@ -44,18 +39,19 @@ MultiLogger& logger = MultiLogger::getInstance();
 
 Configuration config;
 
-TimeHandler myTime(&rtc, ntpServerName, LOCATION_TIME_OFFSET);
+Rtc rtc(RTC_INT, SDA, SCL);
+TimeHandler myTime(ntpServerName, LOCATION_TIME_OFFSET, &rtc);
 
 // ADE900 Object
-ADE9000 ade(VSPI);
+ADE9000 ade9k(ADE_RESET_PIN, ADE_DREADY_PIN, ADE_SPI_BUS);
+
+RingBuffer ringBuffer(PS_BUF_SIZE, true);
 
 // counter holds # isr calls
-volatile uint16_t counter = 0;
+volatile uint32_t counter = 0;
 // Last micros() count of isr call
 volatile long nowTs = 0;
 volatile long lastTs = 0;
-
-RingBuffer ringBuffer(PS_BUF_SIZE, true);
 
 static uint8_t sendbuffer[MAX_SEND_SIZE+16] = {0};
 // Buffer read/write position
@@ -73,7 +69,6 @@ volatile uint32_t TIMER_CYCLES_FAST = (1000000) / DEFAULT_SR; // Cycles between 
 volatile uint32_t timer_next;
 volatile uint32_t timer_now;
 
-
 enum StreamType{USB, TCP, UDP, TCP_RAW};
 
 // Internal state machine for sampling
@@ -83,12 +78,12 @@ SampleState state = STATE_IDLE;
 SampleState next_state = STATE_IDLE;
 
 // Available measures are VOLTAGE+CURRENT, ACTIVE+REACTIVE Power or both
-enum Measures{STATE_VI, STATE_PQ, STATE_VIPQ};
+enum Measures{STATE_3xVI, STATE_VI};
 
 struct StreamConfig {
   bool prefix = false;                      // Send data with "data:" prefix
-  Measures measures = STATE_VI;             // The measures to send
-  uint8_t measurementBytes = 8;             // Number of bytes for each measurement entry
+  Measures measures = STATE_3xVI;           // The measures to send
+  uint8_t measurementBytes = 24;             // Number of bytes for each measurement entry
   unsigned int samplingRate = DEFAULT_SR;   // The samplingrate
   StreamType stream = USB;                  // Channel over which to send
   unsigned int countdown = 0;               // Start at specific time or immidiately
@@ -99,6 +94,9 @@ struct StreamConfig {
 
 StreamConfig streamConfig;
 
+// Internal samplingrate always either 8k or 32k other sr are derived by leavout samples...
+int intSamplingRate = 8000;
+uint8_t leavoutSamples = 0;
 
 // Stuff for frequency calculation
 volatile long freqCalcStart;
@@ -127,10 +125,6 @@ long lifenessUpdate = millis();
 long mdnsUpdate = millis();
 long wifiUpdate = millis();
 
-// HW Timer and mutex for sapmpling ISR
-hw_timer_t * timer = NULL;
-portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
-
 // Current CPU speed
 unsigned int coreFreq = 0;
 
@@ -141,25 +135,15 @@ uint16_t testSamples = 0;
 
 // Mutex for 1s RTC Interrupt
 portMUX_TYPE sqwMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE intterruptSamplesMux = portMUX_INITIALIZER_UNLOCKED;
 bool firstSqwv = true;
 volatile int sqwCounter = 0;
 
-volatile float values[4] = {0};
+volatile uint32_t interruptSamples = 0;
 
-// FPU register state
-uint32_t cp0_regs[18];
+float values[7] = {0};
 
-
-#ifdef ARDUINO_ARCH_ESP32
-#include "esp32-hal-log.h"
-#endif
-
-
-// How can we change those parameters in Arduino, possible?
-// CONFIG_TCP_MSS=1436
-// CONFIG_TCP_MSL=60000
-// CONFIG_TCP_SND_BUF_DEFAULT=5744
-// CONFIG_TCP_WND_DEFAULT=5744
+TaskHandle_t xHandle = NULL;
 
 /************************ SETUP *************************/
 void setup() {
@@ -168,7 +152,7 @@ void setup() {
 
   // At first init the rtc module to get 
   bool successAll = true;
-  bool success = rtc.init();
+
   // Init the logging module
   logger.setTimeGetter(&timeStr);
   // Add Serial logger
@@ -178,20 +162,12 @@ void setup() {
   // Init all loggers
   logger.init();
 
-  if (!success) logger.log(ERROR, "Cannot init RTC");
-  successAll &= success;
-  relay.set(true);
-  // We do not need bluetooth, so disable it
-  esp_bt_controller_disable();
-  pinMode(ERROR_LED, OUTPUT);
+  bool success = rtc.init();
 
-  // Indicate lifeness / reset
-  digitalWrite(ERROR_LED, HIGH);
-  delay(200);
-  digitalWrite(ERROR_LED, LOW);
-  delay(200);
-  digitalWrite(ERROR_LED, HIGH);
-
+  // TODO: To remove 
+  // if (rtc.connected) rtc.enableInterrupt(1, sqwvTriggered);
+  
+  
   config.load();
 
   coreFreq = getCpuFrequencyMhz();
@@ -207,23 +183,18 @@ void setup() {
     if (!success) logger.log(ERROR, "RAM init failed: %i bytes", RAM_BUF_SIZE);
   }
 
-  // config.makeDefault();
-  // config.store();
-
-  timer_init();
-
-  // Setup STPM 32
-  success = stpm34.init();
-  if (!success) logger.log(ERROR, "STPM Init Failed");
+  // Setup ADE9000
+  // pinMode(ADE_CS, OUTPUT);
+  ade9k.initSPI(ADE_SCK, ADE_MISO, ADE_MOSI, ADE_CS);
+  success = ade9k.init(&isr_adc_ready);
+  if (!success) logger.log(ERROR, "ADE Init Failed");
   successAll &= success;
 
   
-   // Indicate error if there is any
-  digitalWrite(ERROR_LED, !successAll);
+  logger.log(ALL, "Connecting Network");
 
-  logger.log(ALL, "Connecting WLAN");
-
-  Network::init(&config, onWifiConnect, onWifiDisconnect);
+  Network::init(&config, onNetworkConnect, onNetworkDisconnect, true);
+  Network::initPHY(ETH_ADDR, ETH_POWER_PIN, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_TYPE, ETH_CLK_MODE);
   setupOTA();
 
   response.reserve(2*COMMAND_MAX_SIZE);
@@ -241,6 +212,25 @@ void setup() {
 
 // the loop routine runs over and over again forever:
 void loop() {
+
+  // For error check during sampling
+  if (sqwCounter) {
+    // If it is still > 0, our loop is too slow, 
+    // reasons may be e.g. slow tcp write performance
+    if (sqwCounter > 1) {
+      logger.log(WARNING, "Loop %us behind", sqwCounter);
+    }
+    // Reset to 0
+    portENTER_CRITICAL(&sqwMux);
+    sqwCounter = 0;
+    portEXIT_CRITICAL(&sqwMux);
+    // Ignore first sqwv showing missing samples since
+    // sqwv did not start with sampling
+    // NOTE: is this valid?
+    // TODO: can we reset the sqwv somehow?
+    
+    // logger.log(INFO, "RTC: %s", rtc.timeStr());
+  }
 
   // Stuff done on idle
   if (state == STATE_IDLE) {
@@ -261,7 +251,7 @@ void loop() {
       int32_t mydelta = streamConfig.countdown - millis();
       // Waiting here is not nice, but we wait for zero crossing
       if (mydelta > 0) delay(mydelta-1);
-      startSampling(true);
+      startSampling();
       // Reset sampling countdown
       streamConfig.countdown = 0;
     }
@@ -286,12 +276,12 @@ char * timeStr() {
   return ttime;
 }
 
-void onWifiConnect() {
-  logger.log(ALL, "Wifi Connected");
-  logger.log(ALL, "IP: %s", WiFi.localIP().toString().c_str());
+void onNetworkConnect() {
+  logger.log(ALL, "Network Connected");
+  logger.log(ALL, "IP: %s", Network::localIP().toString().c_str());
   // The stuff todo if we have a network connection (and hopefully internet as well)
   if (Network::connected and not Network::apMode) {
-    myTime.updateNTPTime();
+    myTime.updateNTPTime(true);
   }
 
   // Reinit mdns
@@ -300,19 +290,16 @@ void onWifiConnect() {
   server.begin();
   streamServer.begin();
 
-  // udpNtp.begin(localNTPPort);
-  // getTimeNTP();
-
   // Reset lifeness and MDNS update
   lifenessUpdate = millis();
   mdnsUpdate = millis();
 }
 
-void onWifiDisconnect() {
-  logger.log(ERROR, "Wifi Disconnected");
+void onNetworkDisconnect() {
+  logger.log(ERROR, "Network Disconnected");
 
   if (state != STATE_IDLE) {
-    logger.log(ERROR, "Stop sampling (Wifi disconnect)");
+    logger.log(ERROR, "Stop sampling (Network disconnect)");
     stopSampling();
   }
 }
@@ -335,10 +322,6 @@ void onIdle() {
     // if (rtc.connected) rtc.update();
     lifenessUpdate += 1000;
     logger.log("");
-    // logger.log(ERROR, "test");
-    // logger.log(WARNING, "test");
-    // logger.log(DEBUG, "test");
-    // logger.log(ALL, "test");
   }
 
   // Handle tcp client connections
@@ -368,7 +351,7 @@ void onIdle() {
       streamConfig.stream = TCP_RAW;
       streamConfig.prefix = false;
       streamConfig.samplingRate = DEFAULT_SR;
-      streamConfig.measures = STATE_VI;
+      streamConfig.measures = STATE_3xVI;
       streamConfig.ip = streamClient.remoteIP();
       streamConfig.port = streamClient.remoteIP();
       startSampling();
@@ -383,7 +366,7 @@ void onClientConnect(WiFiClient &client) {
 }
 
 void onClientDisconnect(WiFiClient &client) {
-  logger.log("Client discconnected", client.remoteIP().toString().c_str());
+  logger.log("Client disconnected", client.remoteIP().toString().c_str());
   logger.removeLogger(&streamLog);
   streamLog._stream = NULL;
 }
@@ -392,40 +375,14 @@ void onSampling() {
   // ______________ Send data to sink ________________
   writeChunks(false);
 
-  // For error check during sampling
-  if (sqwCounter) {
-    portENTER_CRITICAL(&sqwMux);
-    sqwCounter--;
-    portEXIT_CRITICAL(&sqwMux);
-    if (!firstSqwv and testSamples != 0) {
-      response = "******** MISSED ";
-      response += streamConfig.samplingRate - testSamples;
-      response += " SAMPLES ********";
-      logger.log(ERROR, response.c_str());
-    }
-    // If it is still > 0, our loop is too slow, 
-    // reasons may be e.g. slow tcp write performance
-    if (sqwCounter) {
-      logger.log(WARNING, "Loop %us behind", sqwCounter);
-      // Reset to 0
-      portENTER_CRITICAL(&sqwMux);
-      sqwCounter = 0;
-      portEXIT_CRITICAL(&sqwMux);
-    }
-    // Ignore first sqwv showing missing samples since
-    // sqwv did not start with sampling
-    // NOTE: is this valid?
-    // TODO: can we reset the sqwv somehow?
-    if (firstSqwv) firstSqwv = false;
-    testMillis = testMillis2;
-  }
-
   // Output sampling frequency regularly
   if (freq != 0) {
     long fr = freq;
     freq = 0;
-    float frequency = (float)streamConfig.samplingRate/(float)((fr)/1000000.0);
-    logger.log("%.2fHz", frequency);
+    float frequency = (float)streamConfig.samplingRate/(float)((fr)/1000000.0);//  Logging only works for USB rates smaller 8000Hz
+    if (!(streamConfig.stream == USB and streamConfig.samplingRate > 4000)) {
+      logger.log("%.2fHz, %us", frequency, totalSamples);
+    }
   }
 
   // ______________ Handle Disconnect ________________
@@ -458,7 +415,9 @@ void writeChunks(bool tail) {
   while(ringBuffer.available() > streamConfig.chunkSize) {
     if (streamConfig.stream == UDP) {
       udpClient.beginPacket(streamConfig.ip, streamConfig.port);
+      // udpClient.beginPacket(streamConfig.ip, streamConfig.port);
       writeData(udpClient, streamConfig.chunkSize);
+      // udpClient.endPacket();
       udpClient.endPacket();
     } else if (streamConfig.stream == TCP) {
       writeData(tcpClient, streamConfig.chunkSize);
@@ -501,88 +460,152 @@ void writeData(Stream &getter, uint16_t size) {
   ringBuffer.read(&sendbuffer[start], size);
   // Everything is sent at once (hopefully)
   uint32_t sent = getter.write((uint8_t*)&sendbuffer[0], size+start);
+  // Terminate with \r\n for usb // TODO: Can we remove this
+  if (streamConfig.stream == USB) getter.write("\r\n"); 
   if (sent > start) sentSamples += (sent-start)/streamConfig.measurementBytes;
 }
 
 
-static SemaphoreHandle_t timer_sem;
-volatile uint32_t mytime = micros();
 
-void IRAM_ATTR sample_ISR() {
-  static BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-  //Serial.println("TIMERISR");
-  mytime = micros();
-  xSemaphoreGiveFromISR(timer_sem, &xHigherPriorityTaskWoken);
-  if ( xHigherPriorityTaskWoken) {
-    portYIELD_FROM_ISR(); // this wakes up sample_timer_task immediately
-  }
-}
-
-void IRAM_ATTR sample_timer_task(void *param) {
-  timer_sem = xSemaphoreCreateBinary();
-
-  float data[4] = { 0.0 };
-
-  int test = 0;
-
-  while (state == STATE_SAMPLE) {
-    xSemaphoreTake(timer_sem, portMAX_DELAY);
-    test++;
-    if (test%100 == 0) {
-      Serial.println(micros()-mytime);
-    }
-    
-    // Vaiables for frequency count
-    counter++;
-    totalSamples++;
-    if (counter >= streamConfig.samplingRate) {
-      freqCalcNow = micros();
-      freq = freqCalcNow-freqCalcStart;
-      freqCalcStart = freqCalcNow;
-      counter = 0;
-      if (rtc.connected) timerAlarmDisable(timer);
-    }
-
-    if (streamConfig.measures == STATE_VI) {
-      stpm34.readVoltAndCurr((float*) &data[0]);
-      // stpm34.readVoltageAndCurrent(1, (float*) &values[0], (float*) &values[1]);
-    } else if (streamConfig.measures == STATE_PQ) {
-      stpm34.readPower(1, (float*) &data[0], (float*) &data[2], (float*) &data[1], (float*) &data[2]);
-    } else if (streamConfig.measures == STATE_VIPQ) {
-      stpm34.readAll(1, (float*) &data[0], (float*) &data[1], (float*) &data[2], (float*) &data[3]);
-    }
-
-    bool error = ringBuffer.write((uint8_t*)&data[0], streamConfig.measurementBytes);
-    if (error) logger.log(ERROR, "Overflow during ringBuffer write");
-
-
-  }
-  vTaskDelete( NULL );
-}
-
-
-// triggered each second to active a new generation of <samplingrate> samples 
+// // triggered each second to active a new generation of <samplingrate> samples 
 void IRAM_ATTR sqwvTriggered() {
-  // Disable timer if not already done in ISR
-  timerAlarmDisable(timer);
+  // // Disable timer if not already done in ISR
+  // timerAlarmDisable(timer);
   // Reset counter if not already done in ISR
-  testSamples = counter;
-  portENTER_CRITICAL_ISR(&timerMux);
-  counter = 0;
-  portEXIT_CRITICAL_ISR(&timerMux);
+  // testSamples = counter;
   
   // timerAlarmWrite(timer, TIMER_CYCLES_FAST, true);
   // We take one sample and enable the timing interrupt afterwards
   // this should allow the ISR e.g. at 4kHz to take 3999 samples during the next second
-  timerWrite(timer, 0);
-  sample_ISR();
+  // timerWrite(timer, 0);
+  // sample_ISR();
   // Enable timer
-  timerAlarmEnable(timer);
+  // timerAlarmEnable(timer);
   // indicate to main that a second has passed and store time 
   portENTER_CRITICAL_ISR(&sqwMux);
   sqwCounter++;
   portEXIT_CRITICAL(&sqwMux);
+  portENTER_CRITICAL_ISR(&intterruptSamplesMux);
+  interruptSamples = 0;
+  portEXIT_CRITICAL(&intterruptSamplesMux);
+  
   testMillis2 = millis();
+}
+
+
+xQueueHandle xQueue;
+
+bool volatile IRAM_timeout = false;
+
+
+
+CurrentADC isrData;
+float data[7] = {0.0};
+volatile int skipper = 0;
+
+
+bool dummy = true;
+volatile uint8_t cntLeavoutSamples = 0;
+
+
+// _____________________________________________________________________________
+void IRAM_ATTR isr_adc_ready() {
+  // Skip this interrup if we want less samples
+  cntLeavoutSamples++;
+  if (cntLeavoutSamples < leavoutSamples) return;
+  cntLeavoutSamples = 0;
+  if (interruptSamples >= streamConfig.samplingRate) return;
+  portENTER_CRITICAL_ISR(&intterruptSamplesMux);
+  interruptSamples++;
+  portEXIT_CRITICAL(&intterruptSamplesMux);
+  CurrentADC adc;
+  ade9k.readRawMeasurement(&adc);
+  BaseType_t xHigherPriorityTaskWoken;
+  BaseType_t xStatus = xQueueSendToBackFromISR( xQueue, &adc, &xHigherPriorityTaskWoken );
+
+  // BaseType_t xStatus = xQueueSendToBack( xQueue, &data, 10 );
+  // check whether sending is ok or not
+  if( xStatus == pdPASS ) {
+  } else {
+    IRAM_timeout = true;
+  }
+
+  xTaskResumeFromISR( xHandle );
+}
+
+bool QueueTimeout = false;
+float values2[7] = {0.0};
+
+size_t sendstart = 0;
+uint16_t myChunkSize = (512/24)*24;
+// _____________________________________________________________________________
+void sample_timer_task( void * parameter) {
+  vTaskSuspend( NULL );  // ISR wakes up the task
+
+  CurrentADC adc;
+  while(state == STATE_SAMPLE){
+    bool dum;
+
+    BaseType_t xStatus = xQueueReceive( xQueue, &adc, 0);
+
+    if(xStatus == pdPASS) {
+
+      ade9k.convertRawMeasurement(&adc, &values2[0]);
+
+      counter++;
+      totalSamples++;
+      if (counter >= streamConfig.samplingRate) {
+        freqCalcNow = micros();
+        freq = freqCalcNow-freqCalcStart;
+        freqCalcStart = freqCalcNow;
+        counter = 0;
+
+        if(IRAM_timeout) {
+          logger.log(ERROR, "Lost interrupt!");
+          IRAM_timeout = false;
+        }
+
+        if(QueueTimeout) {
+          logger.log(ERROR, "Queue timeout!");
+          QueueTimeout = false;
+        }
+      }
+
+      // For serial there is no need to buffer it anyway
+      if (streamConfig.stream == USB) {
+        Serial.write((uint8_t*)&values2[0], streamConfig.measurementBytes);
+        // Serial.write((uint8_t*)&values2[0], 16);
+        Serial.println("");
+      } else {
+        if (sendstart == 0) {
+          memcpy(&sendbuffer[sendstart], (void*)&data_id[0], sizeof(data_id));
+          sendstart += sizeof(data_id);
+          memcpy(&sendbuffer[sendstart], (void*)&myChunkSize, sizeof(uint16_t));
+          sendstart += sizeof(uint16_t);
+          memcpy(&sendbuffer[sendstart], (void*)&packetNumber, sizeof(uint32_t));
+          sendstart += sizeof(uint32_t);
+          packetNumber += 1;
+        }
+        memcpy(&sendbuffer[sendstart], (uint8_t*)&values2[0], streamConfig.measurementBytes);
+        sendstart += streamConfig.measurementBytes;
+        if (sendstart>=myChunkSize) {
+          tcpClient.write(sendbuffer, sendstart);
+          sendstart = 0;
+        }
+
+        // bool success = ringBuffer.write((uint8_t*)&values2[0], streamConfig.measurementBytes);
+        // if (!success) logger.log(ERROR, "Overflow during ringBuffer write");
+      }
+
+    } else {
+      QueueTimeout = true;
+    }
+
+    if(!uxQueueMessagesWaiting(xQueue)) {
+      vTaskSuspend( NULL );  // release computing time, ISR wakes up the task.
+    }
+  }
+  vTaskDelete( NULL );
 }
 
 // To display only full percent updates
@@ -660,6 +683,9 @@ void handleEvent(Stream &getter) {
   response = "";
   handleJSON(getter);
   if (docSend.isNull() == false) {
+    if (docSend["error"].as<bool>()) {
+      logger.log(ERROR, (const char*)docSend["msg"]);
+    }
     getter.flush();
     response = "";
     serializeJson(docSend, response);
@@ -680,7 +706,7 @@ void handleJSON(Stream &getter) {
   const char* cmd = docRcv[F("cmd")]["name"];
   JsonObject root = docRcv.as<JsonObject>();
   if (cmd == nullptr) {
-    docSend["msg"] = F("JSON does not match format, syntax: {\"cmd\":{\"name\":<commandName>, \"[payload\":{<possible data>}]}}");
+    docSend["msg"] = F("JSON format error, syntax: {\"cmd\":{\"name\":<cmdName>, \"[payload\":{<data>}]}}");
     return;
   }
 
@@ -703,24 +729,24 @@ void handleJSON(Stream &getter) {
       docSend["msg"] = response;
       return;
     }
-    if (rate > 8000 || rate <= 0) {
+    // We can only do these rates
+    if (32000%rate == 0) {
+      if (rate <= 8000) intSamplingRate = 8000;
+      else intSamplingRate = 32000;
+      int leavout = intSamplingRate/rate;
+      leavoutSamples = leavout;
+    } else {
       response = "SamplingRate could not be set to ";
       response += rate;
       docSend["msg"] = response;
       return;
     }
     if (measuresC == nullptr) {
-      streamConfig.measures = STATE_VI;
-      streamConfig.measurementBytes = 8;
+      streamConfig.measures = STATE_3xVI;
+      streamConfig.measurementBytes = 24;
     } else if (strcmp(measuresC, "v,i") == 0) {
       streamConfig.measures = STATE_VI;
       streamConfig.measurementBytes = 8;
-    } else if (strcmp(measuresC, "p,q") == 0) {
-      streamConfig.measures = STATE_PQ;
-      streamConfig.measurementBytes = 8;
-    } else if (strcmp(measuresC, "v,i,p,q") == 0) {
-      streamConfig.measures = STATE_VIPQ;
-      streamConfig.measurementBytes = 16;
     } else {
       response = "Unsupported measures";
       response += measuresC;
@@ -775,18 +801,14 @@ void handleJSON(Stream &getter) {
     }
     // Set global sampling variable
     streamConfig.samplingRate = rate;
-    TIMER_CYCLES_FAST = (1000000) / streamConfig.samplingRate; // Cycles between HW timer inerrupts
     calcChunkSize();
-
-
+    
     docSend["sampling_rate"] = streamConfig.samplingRate;
     docSend["chunk_size"] = streamConfig.chunkSize;
     docSend["conn_type"] = typeC;
+    docSend["measurement_bytes"] = streamConfig.measurementBytes;
     docSend["prefix"] = streamConfig.prefix;
-    docSend["timer_cycles"] = TIMER_CYCLES_FAST;
     docSend["cmd"] = CMD_SAMPLE;
-
-    relay.set(true);
 
     next_state = STATE_SAMPLE;
 
@@ -813,27 +835,7 @@ void handleJSON(Stream &getter) {
     docSend["error"] = false;
     state = next_state;
     // UDP packets are not allowed to exceed 1500 bytes, so keep size reasonable
-    startSampling(true);
-  }
-
-  /*********************** SWITCHING COMMAND ****************************/
-  // {"cmd":{"name":"switch", "payload":{"value":"true"}}}
-  else if (strcmp(cmd, CMD_SWITCH) == 0) {
-    // For switching we need value payload
-    docSend["error"] = true;
-    JsonVariant payloadValue = root["cmd"]["payload"]["value"];
-    if (payloadValue.isNull()) {
-      docSend["error"] = false;
-      docSend["msg"] = F("Info:Not a valid \"switch\" command");
-      return;
-    }
-    bool value = docRcv["cmd"]["payload"]["value"].as<bool>();
-    docSend["msg"]["switch"] = value;
-    response = F("Switching: ");
-    response += value ? F("On") : F("Off");
-    docSend["msg"] = response;
-    docSend["error"] = false;
-    relay.set(value);
+    startSampling();
   }
 
   /*********************** STOP COMMAND ****************************/
@@ -847,7 +849,7 @@ void handleJSON(Stream &getter) {
     docSend["sample_duration"] = samplingDuration;
     docSend["samples"] = totalSamples;
     docSend["sent_samples"] = sentSamples;
-    docSend["ip"] = WiFi.localIP().toString();
+    docSend["ip"] = Network::localIP().toString();
     docSend["avg_rate"] = totalSamples/(samplingDuration/1000.0);
     docSend["cmd"] = CMD_STOP;
   }
@@ -877,7 +879,7 @@ void handleJSON(Stream &getter) {
     docSend["compiled"] = compiled;
     docSend["sys_time"] = myTime.timeStr();
     docSend["name"] = config.name;
-    docSend["ip"] = WiFi.localIP().toString();
+    docSend["ip"] = Network::localIP().toString();
     docSend["sampling_rate"] = streamConfig.samplingRate;
     docSend["buffer_size"] = ringBuffer.getSize();
     docSend["psram"] = ringBuffer.inPSRAM();
@@ -1035,30 +1037,23 @@ void handleJSON(Stream &getter) {
       hasRow = spiffsLog.nextRow(&command[0]);
     }
     getter.println("*** LOGFile *** \"}");
-    
-    /*
-    getter.printf("%s *** LOGFile *** //n", &LOG_PREFIX[0]);
-    while(hasRow) {
-      getter.printf("%s%s\n", &LOG_PREFIX[0], &command[0]);
-      hasRow = spiffsLog.nextRow(&command[0]);
-    }
-    getter.printf("%s *** LOGFile *** \n", &LOG_PREFIX[0]);
-    */
   }
 }
 
 
 /****************************************************
- * Stop Sampling will go into ide state, stop the
+ * Stop Sampling will go into idle state, stop the
  * interrupt and if any stream client is connected,
  * will send EOF to the client
  ****************************************************/
 void stopSampling() {
-  if (rtc.connected) rtc.disableInterrupt();
+  if (rtc.connected) rtc.disableInterrupt(); // TODO
+
   state = STATE_IDLE;
   next_state = STATE_IDLE;
-  // Stop the timer interrupt
-  turnInterrupt(false);
+  
+  ade9k.stopSampling();
+
   samplingDuration = millis() - startSamplingMillis;
   if (streamClient && streamClient.connected()) streamClient.stop();
   // Reset all variables
@@ -1091,9 +1086,13 @@ void calcChunkSize() {
   if (streamConfig.stream == UDP) {
     chunkSize = min((int)chunkSize, 512);
   } else if (streamConfig.stream == USB) {
-    // For mac we only have 1020 bytes
-    chunkSize = min((int)chunkSize, 16);
+    // For mac we only must read after max 1020 bytes so chunk size must be smaller 
+    chunkSize = 128;
+    // chunkSize = min((int)chunkSize, 16);
   }
+  // Look that we always have an integer multiple of a complete measruement inside a chunk
+  chunkSize = chunkSize/streamConfig.measurementBytes*streamConfig.measurementBytes;
+  chunkSize = max((int)streamConfig.measurementBytes, (int)chunkSize);
   streamConfig.chunkSize = chunkSize;
 }
 
@@ -1104,68 +1103,38 @@ void calcChunkSize() {
  * all buffer indices are reset to the default values.
  ****************************************************/
 inline void startSampling() {
-  startSampling(false);
-}
-
-void startSampling(bool waitVoltage) {
   // Reset all variables
   state = STATE_SAMPLE;
+
+  xQueue = xQueueCreate(200, sizeof(CurrentADC)); 
   xTaskCreatePinnedToCore(  sample_timer_task,     /* Task function. */
-    "Consumer",       /* String with name of task. */
-    4096,            /* Stack size in words. */
-    NULL,             /* Parameter passed as input of the task */
-    10,                /* Priority of the task. */
-    &xHandle,            /* Task handle. */
-    1);
+        "sampleTask",       /* String with name of task. */
+        4096*2,            /* Stack size in words. */
+        NULL,             /* Parameter passed as input of the task */
+        20,                /* Priority of the task. */
+        &xHandle,            /* Task handle. */
+        0); // Same task as the loop
+        //  Network::ethernet? 1 : 0); // On wifi use core 0 on ethernet core 1 since wifi requires core 0 to be mostly idle
 
   counter = 0;
   sentSamples = 0;
   totalSamples = 0;
-  TIMER_CYCLES_FAST = (1000000) / streamConfig.samplingRate; // Cycles between HW timer inerrupts
+  interruptSamples = 0;
   calcChunkSize();
   ringBuffer.reset();
   samplingDuration = 0;
   packetNumber = 0;
-  // This will reset the sqwv pin
-  firstSqwv = true;
-  sqwCounter = 0;
-  if (rtc.connected) rtc.enableInterrupt(1, sqwvTriggered);
-  // If we should wait for voltage to make positive zerocrossing
-  if (waitVoltage) {
-    while(stpm34.readVoltage(1) > 0) {yield();}
-    while(stpm34.readVoltage(1) < 0) {yield();}
-  }
+  
+  if (rtc.connected) rtc.enableInterrupt(1, sqwvTriggered); // TODO
+  
   freqCalcNow = millis();
   freqCalcStart = millis();
   startSamplingMillis = millis();
-  turnInterrupt(true);
+  
+  ade9k.startSampling(intSamplingRate);
 }
 
-/****************************************************
- * Detach or attach sampling interupt
- ****************************************************/
-void turnInterrupt(bool on) {
-  cli();//stop interrupts
-  if (on) {
-    // timer_init();
-    // The timer runs at 80 MHZ, independent of cpu clk
-    timerAlarmWrite(timer, TIMER_CYCLES_FAST, true);
-    timerWrite(timer, 0);
-    timerAlarmEnable(timer);
-  } else {
-    if (timer != NULL) timerAlarmDisable(timer);
-    // timer = NULL;
-  }
-  sei();
-}
 
-void timer_init() {
-  // Timer base freq is 80Mhz
-  timer = NULL;
-  // Make a 1 Mhz clk here
-  timer = timerBegin(0, 80, true);
-  timerAttachInterrupt(timer, &sample_ISR, true);
-}
 
 /****************************************************
  * Init the MDNs name from eeprom, only the number ist
@@ -1198,6 +1167,7 @@ void setInfoString(char * str) {
   } else {
     idx += sprintf(&str[idx], "RAM");
   }
+
   if (rtc.connected) {
     idx += sprintf(&str[idx], "\nRTC is connected ");
     if (rtc.lost) {
@@ -1205,10 +1175,14 @@ void setInfoString(char * str) {
     } else {
       idx += sprintf(&str[idx], "and has valid time");
     }
+    idx += sprintf(&str[idx], "\nRTCTime: ");
+    idx += sprintf(&str[idx], rtc.timeStr());
   } else {
     idx += sprintf(&str[idx], "\nNo RTC");
   }
-  idx += sprintf(&str[idx], "\nCurrent system time: ToImplement");
+
+  idx += sprintf(&str[idx], "\nCurrent system time: ");
+  idx += sprintf(&str[idx], myTime.timeStr());
   // All SSIDs
   String ssids = "";
   for (int i = 0; i < config.numAPs; i++) {
