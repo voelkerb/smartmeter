@@ -493,18 +493,15 @@ void IRAM_ATTR sqwvTriggered() {
 }
 
 
-xQueueHandle xQueue;
+xQueueHandle xQueue = xQueueCreate(2000, sizeof(CurrentADC)); ;
 
 bool volatile IRAM_timeout = false;
-
 
 
 CurrentADC isrData;
 float data[7] = {0.0};
 volatile int skipper = 0;
 
-
-bool dummy = true;
 volatile uint8_t cntLeavoutSamples = 0;
 
 
@@ -538,6 +535,7 @@ float values2[7] = {0.0};
 
 size_t sendstart = 0;
 uint16_t myChunkSize = (512/24)*24;
+long bufftimer = millis();
 // _____________________________________________________________________________
 void sample_timer_task( void * parameter) {
   vTaskSuspend( NULL );  // ISR wakes up the task
@@ -577,24 +575,27 @@ void sample_timer_task( void * parameter) {
         // Serial.write((uint8_t*)&values2[0], 16);
         Serial.println("");
       } else {
-        if (sendstart == 0) {
-          memcpy(&sendbuffer[sendstart], (void*)&data_id[0], sizeof(data_id));
-          sendstart += sizeof(data_id);
-          memcpy(&sendbuffer[sendstart], (void*)&myChunkSize, sizeof(uint16_t));
-          sendstart += sizeof(uint16_t);
-          memcpy(&sendbuffer[sendstart], (void*)&packetNumber, sizeof(uint32_t));
-          sendstart += sizeof(uint32_t);
-          packetNumber += 1;
-        }
-        memcpy(&sendbuffer[sendstart], (uint8_t*)&values2[0], streamConfig.measurementBytes);
-        sendstart += streamConfig.measurementBytes;
-        if (sendstart>=myChunkSize) {
-          tcpClient.write(sendbuffer, sendstart);
-          sendstart = 0;
-        }
+        // if (sendstart == 0) {
+        //   memcpy(&sendbuffer[sendstart], (void*)&data_id[0], sizeof(data_id));
+        //   sendstart += sizeof(data_id);
+        //   memcpy(&sendbuffer[sendstart], (void*)&myChunkSize, sizeof(uint16_t));
+        //   sendstart += sizeof(uint16_t);
+        //   memcpy(&sendbuffer[sendstart], (void*)&packetNumber, sizeof(uint32_t));
+        //   sendstart += sizeof(uint32_t);
+        //   packetNumber += 1;
+        // }
+        // memcpy(&sendbuffer[sendstart], (uint8_t*)&values2[0], streamConfig.measurementBytes);
+        // sendstart += streamConfig.measurementBytes;
+        // if (sendstart>=myChunkSize) {
+        //   tcpClient.write(sendbuffer, sendstart);
+        //   sendstart = 0;
+        // }
 
-        // bool success = ringBuffer.write((uint8_t*)&values2[0], streamConfig.measurementBytes);
-        // if (!success) logger.log(ERROR, "Overflow during ringBuffer write");
+        bool success = ringBuffer.write((uint8_t*)&values2[0], streamConfig.measurementBytes);
+        if (!success and millis() - bufftimer > 1000) {
+          bufftimer = millis();
+          logger.log(ERROR, "Overflow during ringBuffer write");
+        }
       }
 
     } else {
@@ -1106,14 +1107,13 @@ inline void startSampling() {
   // Reset all variables
   state = STATE_SAMPLE;
 
-  xQueue = xQueueCreate(200, sizeof(CurrentADC)); 
-  xTaskCreatePinnedToCore(  sample_timer_task,     /* Task function. */
+  xTaskCreatePinnedToCore(sample_timer_task,     /* Task function. */
         "sampleTask",       /* String with name of task. */
         4096*2,            /* Stack size in words. */
         NULL,             /* Parameter passed as input of the task */
         20,                /* Priority of the task. */
         &xHandle,            /* Task handle. */
-        0); // Same task as the loop
+        1); // Same task as the loop
         //  Network::ethernet? 1 : 0); // On wifi use core 0 on ethernet core 1 since wifi requires core 0 to be mostly idle
 
   counter = 0;
