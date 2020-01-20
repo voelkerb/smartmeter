@@ -1,0 +1,19 @@
+Disable csrutil
+- restart into recovery mode: cmd + r while booting
+- open terminal
+-- crsutil disable
+- restart
+
+Mount system directory as read write
+- sudo mount -uw
+
+Copy kext to Extension folder
+- sudo cp -R <source/FTDIUSBSerialDriver.kext> /System/Library/Extensions/FTDIUSBSerialDriver.kext/
+
+Load modified kernel extension
+- sudo kextload /System/Library/Extensions/FTDIUSBSerialDriver.kext/
+
+Remember that you have different baud rate mappings now:
+300  ->  4M
+600  ->  8M
+1200 -> 12M
