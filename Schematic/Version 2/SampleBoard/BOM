@@ -1,0 +1,95 @@
+Partlist
+
+Exported from sample.brd at 16.12.19 14:44
+
+EAGLE Version 9.5.0 Copyright (c) 1988-2019 Autodesk, Inc.
+
+Assembly variant: 
+
+Part     Value                  Package                       Library          Position (mm)         Orientation
+
+C1       1nF                    C0603K                        rcl              (38.1 30.861)         R90
+C2       10uF                   _0603MP                       microbuilder     (5.842 17.018)        R180
+C3       0.1uF                  _0603MP                       microbuilder     (11.303 21.336)       R90
+C4       10uF                   _0603MP                       microbuilder     (12.319 8.763)        R270
+C5       10uF                   _0603MP                       microbuilder     (17.78 9.271)         R0
+C6       10uF                   _0603MP                       microbuilder     (14.478 22.86)        R90
+C7       0.1uF                  _0603MP                       microbuilder     (10.033 6.985)        R180
+C8       0.1uF                  _0603MP                       microbuilder     (20.066 8.636)        R90
+C9       0.1uF                  _0603MP                       microbuilder     (10.033 21.336)       R90
+C10      1u                     C0402                         rcl              (81.026 34.036)       R0
+C11      100n                   C0603K                        rcl              (68.072 23.876)       R270
+C12      470p                   C0402                         rcl              (81.026 32.766)       R0
+C13      100n                   C0603K                        rcl              (89.408 25.908)       R0
+C14      100n                   C0603K                        rcl              (89.408 28.956)       R180
+C15      22nF                   C0603K                        rcl              (89.408 24.384)       R0
+C16      150p                   C0603K                        rcl              (29.972 36.703)       R90
+C17      100n                   C0603K                        rcl              (32.893 36.703)       R90
+C18      100u                   D/7343-31W                    rcl              (53.086 4.826)        R180
+C19      1u                     C0603K                        rcl              (31.369 36.703)       R90
+C28      100nF                  C0603K                        rcl              (30.607 12.827)       R180
+ERROR    RED                    CHIP-LED0805                  led              (60.833 11.811)       R90
+ESP32    ESP32-WROVER-I         XCVR_ESP32-WROVER-I           ESP32-WROVER-I   (48.641 24.003)       R0
+FB1      Ferrite                _0603MP                       microbuilder     (13.462 8.763)        R270
+FB2      Ferrite                _0603MP                       microbuilder     (17.78 8.001)         R180
+IC1      93LC56B                SOT23-6                       microchip        (5.715 12.192)        R180
+IC2      FT232HQ                QFN48_8MM                     microbuilder     (15.24 15.24)         R90
+JP2      INT                    SMT-JUMPER_2_NC_TRACE_NO-SILK SparkFun-Jumpers (23.241 9.144)        R0
+JP3      32K                    SMT-JUMPER_2_NC_TRACE_NO-SILK SparkFun-Jumpers (23.241 11.303)       R0
+JP4      PM1                    SMT-JUMPER_2_NC_TRACE_NO-SILK SparkFun-Jumpers (14.986 36.068)       R90
+JP5      ERROR                  SMT-JUMPER_2_NC_TRACE_NO-SILK SparkFun-Jumpers (60.96 8.128)         R180
+JP6      CF3                    SMT-JUMPER_2_NO_NO-SILK       SparkFun-Jumpers (25.146 35.941)       R90
+JP7      !IRQ1                  SMT-JUMPER_2_NO_NO-SILK       SparkFun-Jumpers (20.066 35.941)       R270
+JP8      !IRQ0                  SMT-JUMPER_2_NO_NO-SILK       SparkFun-Jumpers (17.526 35.941)       R270
+JP9      RST                    SMT-JUMPER_2_NO_NO-SILK       SparkFun-Jumpers (23.241 6.858)        R0
+L1       which?                 0603                          SparkFun-Coils   (89.408 27.559)       R0
+LED1     green                  CHIPLED_0603_NOOUTLINE        microbuilder     (8.255 2.794)         R90
+LED2     red                    CHIPLED_0603_NOOUTLINE        microbuilder     (22.225 2.794)        R270
+Q1       S8050                  SOT-23                        Seeed-Transistor (22.479 20.574)       R0
+Q2       S8050                  SOT-23                        Seeed-Transistor (26.543 20.574)       R0
+Q3       CSTCR 12MHz            RESONATOR-SMD                 SparkFun         (6.604 8.509)         R0
+R1       12K                    _0603MP                       microbuilder     (12.954 21.336)       R90
+R2       12k                    R0603                         resistor         (22.479 17.907)       R0
+R3       12k                    R0603                         resistor         (26.543 17.907)       R180
+R4       12K 1%                 _0603MP                       microbuilder     (14.605 8.763)        R270
+R5       1K                     _0603MP                       microbuilder     (9.017 4.572)         R270
+R6       1K                     _0603MP                       microbuilder     (21.463 4.572)        R270
+R7       2.2K                   _0603MP                       microbuilder     (5.715 14.478)        R0
+R8       4.7K                   _0603MP                       microbuilder     (6.223 18.161)        R0
+R9       5k                     R0603                         resistor         (18.669 24.13)        R180
+R10      12K                    _0603MP                       microbuilder     (6.223 19.558)        R180
+R11      5k                     R0603                         resistor         (60.452 16.891)       R180
+R12      4.7k                   R0603                         resistor         (60.452 20.828)       R0
+R13      12k                    R0603                         resistor         (36.449 30.861)       R270
+R14      10k                    R0603                         resistor         (41.275 4.826)        R90
+R15      4.7k                   R0603                         resistor         (36.703 21.717)       R180
+R16      33                     R0603                         resistor         (81.026 31.115)       R180
+R17      10k                    R0402                         resistor         (13.081 36.322)       R90
+R18      10                     R0603                         resistor         (77.978 37.465)       R270
+R19      0                      R0603                         resistor         (88.9 20.955)         R90
+R20      10                     R0603                         resistor         (80.264 37.465)       R270
+R21      12.1k                  R0603                         resistor         (80.899 27.813)       R0
+R22      4.7k                   R0603                         resistor         (68.453 29.337)       R0
+R23      33                     R0603                         resistor         (71.501 31.369)       R180
+R24      33                     R0603                         resistor         (68.453 31.369)       R180
+R25      4.7k                   R0603                         resistor         (36.703 23.495)       R180
+R26      33                     R0603                         resistor         (70.739 35.687)       R180
+R27      10                     R0603                         resistor         (70.739 37.719)       R180
+R28      10k                    R0603                         resistor         (45.339 4.826)        R270
+R29      10k                    R0603                         resistor         (43.307 4.826)        R270
+R30      10                     R0603                         resistor         (75.184 37.465)       R90
+R31      220                    R0603                         resistor         (60.833 9.906)        R0
+R32      332                    R0603                         resistor         (86.487 3.81)         R90
+R33      332                    R0603                         resistor         (88.519 3.81)         R90
+R34      49.9                   R0603                         resistor         (78.232 23.241)       R270
+R35      49.9                   R0603                         resistor         (81.915 25.146)       R0
+R36      49.9                   R0603                         resistor         (72.263 26.416)       R180
+R37      49.9                   R0603                         resistor         (75.946 23.241)       R270
+R38      4.7k                   R0603                         resistor         (64.516 22.86)        R90
+R39      0                      R0603                         resistor         (67.31 20.955)        R90
+RTC      DS3231                 DS3231                        _lh-library      (30.988 6.223)        R270
+SG7050   OSCILLATORSMD-7X5-4PAD OSCILLATOR-SMD-7X5-4PAD       SparkFun-Clocks  (87.503 35.306)       R90
+SV1      EXT SPI                ML14                          con-harting-ml   (20.066 29.972)       R0
+U$2      HR911105A              RJ45                          HR911105A        (76.2 10.16)          R270
+U1       LAN8720A-CP            QFN50P400X400X100-25N         LAN8720A-CP      (76.454 30.353)       R180
+X1       MiniB                  4UCONN_20329                  microbuilder     (15.24 4.318)         R0

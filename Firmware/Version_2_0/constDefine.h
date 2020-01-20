@@ -1,7 +1,8 @@
 
 
 // Serial Speed and DEBUG option
-#define SERIAL_SPEED 115200
+// #define SERIAL_SPEED 115200
+#define SERIAL_SPEED 12000000
 // #define SERIAL_SPEED 3000000
 // #define DEBUG_DEEP
 #define SENT_LIFENESS_TO_CLIENTS
@@ -16,7 +17,7 @@
 #define DEFAULT_SR 8000
 
 
-// Location time difference between us (Freiburg, Germany) and NTP time 
+// Location time difference between us (Freiburg, Germany) and NTP time
 #define LOCATION_TIME_OFFSET 3600//7200 // 2 hours or (2*60*60)
 
 
@@ -31,9 +32,9 @@ const char LOG_PREFIX[] = "Info:";
 
 
 // All available pins of ESP32
-#define IO0 0 
-#define IO1 1 // UART 0 TX 
-#define IO2 2 
+#define IO0 0
+#define IO1 1 // UART 0 TX
+#define IO2 2
 #define IO3 3 // UART 0 RX
 #define IO4 4 // HSPI H0
 #define IO5 5 // Strapping (must be pulled low at boot)
@@ -42,19 +43,19 @@ const char LOG_PREFIX[] = "Info:";
 #define IO8 8 // SPI          // Blocked for SPI Flash
 #define IO9 9 // UART 1 RX    // Blocked for SPI Flash
 #define IO10 10 // UART 1 TX  // Blocked for SPI Flash
-#define IO11 11 // SPI CS     // Blocked for SPI Flash 
+#define IO11 11 // SPI CS     // Blocked for SPI Flash
 #define IO12 12 // HSPI Q     // Strapping (must be pulled low at boot)
-#define IO13 13 // HSPI ID  
-#define IO14 14 // HSPI CLK   // Strapping  
+#define IO13 13 // HSPI ID
+#define IO14 14 // HSPI CLK   // Strapping
 #define IO15 15 // HSPI CS    // Strapping
-#define IO16 16 // Not Available (PSRAM)   
+#define IO16 16 // Not Available (PSRAM)
 #define IO17 17 // Not Available (PSRAM)
-#define IO18 18 // VSPI CLK  
-#define IO19 19 // VSPI MOSI 
+#define IO18 18 // VSPI CLK
+#define IO19 19 // VSPI MOSI
 // #define IO20 20 // non existent
 #define IO21 21 // VSPI H2
-#define IO22 22 // VSPI WP 
-#define IO23 23 // VSPI MISO 
+#define IO22 22 // VSPI WP
+#define IO23 23 // VSPI MISO
 // #define IO24 24 // non existent
 #define IO25 25 // DAC_1
 #define IO26 26 // DAC_2
@@ -64,7 +65,7 @@ const char LOG_PREFIX[] = "Info:";
 // #define IO30 30 // non existent
 // #define IO31 31 // non existent
 #define IO32 32
-#define IO33 33 
+#define IO33 33
 #define IO34 34  // Input only
 #define IO35 35  // Input only
 #define IO36 36  // Input only
@@ -78,7 +79,7 @@ const char LOG_PREFIX[] = "Info:";
 #define ADE_SPI_BUS VSPI
 // // TODO: Change
 #define ADE_RESET_PIN   IO2
-// // Event Pin/Data Ready 
+// // Event Pin/Data Ready
 #define ADE_DREADY_PIN    IO34
 
 
@@ -105,9 +106,11 @@ const char LOG_PREFIX[] = "Info:";
 // RTC
 #define SDA     IO32
 #define SCL     IO33
-#define RTC_INT IO36 
+#define RTC_INT IO36
 
 
+
+#define ERROR_LED IO4
 
 // AVAILABLE Pins
 // IO1  // UART TX
@@ -115,7 +118,6 @@ const char LOG_PREFIX[] = "Info:";
 // IO4
 
 // IDEA:
-// ERROR LED IO4 ^^
 // ADE:
 // N_IRQ0_PIN  IO36 // input
 // N_IRQ1_PIN  IO39 // input

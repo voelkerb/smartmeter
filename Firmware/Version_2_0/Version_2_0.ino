@@ -149,6 +149,8 @@ TaskHandle_t xHandle = NULL;
 void setup() {
   // Setup serial communication
   Serial.begin(SERIAL_SPEED);
+  pinMode(ERROR_LED, OUTPUT);
+  digitalWrite(ERROR_LED, HIGH);
 
   // At first init the rtc module to get 
   bool successAll = true;
@@ -189,8 +191,8 @@ void setup() {
   success = ade9k.init(&isr_adc_ready);
   if (!success) logger.log(ERROR, "ADE Init Failed");
   successAll &= success;
-
   
+  if (successAll) digitalWrite(ERROR_LED, LOW);
   logger.log(ALL, "Connecting Network");
 
   Network::init(&config, onNetworkConnect, onNetworkDisconnect, true);

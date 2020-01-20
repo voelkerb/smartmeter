@@ -4,6 +4,10 @@
 
 **/tmp_*
 
+**/*.cpp.o
+
+**/.vscode*
+
 **/.DS_Store
 
 # Eagle temporary board and schematic file
