@@ -22,6 +22,7 @@
 #include "src/rtc/rtc.h"
 #include "src/time/timeHandling.h"
 #include "src/logger/logger.h"
+#include "src/mqtt/mqtt.h"
 
 void isr_adc_ready();
 void IRAM_ATTR sqwvTriggered();
@@ -69,21 +70,24 @@ volatile uint32_t timer_now;
 
 
 // Internal state machine for sampling
-enum SampleState{STATE_IDLE, STATE_SAMPLE};
+enum class SampleState{IDLE, SAMPLE};
 
-SampleState state = STATE_IDLE;
-SampleState next_state = STATE_IDLE;
+SampleState state = SampleState::IDLE;
+SampleState next_state = SampleState::IDLE;
+
+// Define it before StreamType enum redefines it
+MQTT mqtt;
 
 // Available measures are VOLTAGE+CURRENT, ACTIVE+REACTIVE Power or both
-enum Measures{STATE_3xVI, STATE_VI};
-enum StreamType{USB, TCP, UDP, TCP_RAW};
+enum class Measures{VIVIVI, VI};
+enum class StreamType{USB, TCP, UDP, TCP_RAW, MQTT};
 
 struct StreamConfig {
   bool prefix = false;                      // Send data with "data:" prefix
-  Measures measures = STATE_3xVI;           // The measures to send
+  Measures measures = Measures::VIVIVI;           // The measures to send
   uint8_t measurementBytes = 24;             // Number of bytes for each measurement entry
   unsigned int samplingRate = DEFAULT_SR;   // The samplingrate
-  StreamType stream = USB;                  // Channel over which to send
+  StreamType stream = StreamType::USB;                  // Channel over which to send
   unsigned int countdown = 0;               // Start at specific time or immidiately
   uint32_t chunkSize = 0;                   // Chunksize of one packet sent
   IPAddress ip;                             // Ip address of data sink
@@ -108,6 +112,9 @@ StreamLogger * streamLog[MAX_CLIENTS];
 
 // Strean client is for ffmpeg direct streaming
 WiFiClient streamClient;
+// tcp stuff is send over this client 
+// Init getter to point to sth, might not work otherwise
+Stream * newGetter = (Stream*)&Serial;
 // tcp stuff is send over this client 
 WiFiClient * sendClient;
 // UDP used for streaming
@@ -153,6 +160,13 @@ float values[7] = {0};
 
 TaskHandle_t xHandle = NULL;
 
+bool updating = false;
+
+char mqttTopicPubSwitch[MAX_MQTT_PUB_TOPIC_SWITCH+MAX_NAME_LEN] = {'\0'};
+char mqttTopicPubSample[MAX_MQTT_PUB_TOPIC_SAMPLE+MAX_NAME_LEN] = {'\0'};
+char mqttTopicPubInfo[MAX_MQTT_PUB_TOPIC_INFO+MAX_NAME_LEN] = {'\0'};
+
+
 /************************ SETUP *************************/
 void setup() {
   // Setup serial communication
@@ -171,7 +185,6 @@ void setup() {
   logger.addLogger(&spiffsLog);
   // Init all loggers
   logger.init();
-
   // init the stream logger array
   for (size_t i = 0; i < MAX_CLIENTS; i++) {
     StreamLogger * theStreamLog = new StreamLogger(NULL, &timeStr, &LOG_PREFIX[0], INFO);
@@ -210,6 +223,11 @@ void setup() {
 
   response.reserve(2*COMMAND_MAX_SIZE);
 
+  // Set mqtt and callbacks
+  mqtt.init(config.mqttServer, config.name);
+  mqtt.onConnect = &onMQTTConnect;
+  mqtt.onDisconnect = &onMQTTDisconnect;
+  mqtt.onMessage = &mqttCallback;
 
   setInfoString(&command[0]);
   logger.log(&command[0]);
@@ -224,6 +242,7 @@ void setup() {
 
 // the loop routine runs over and over again forever:
 void loop() {
+  if (updating) return;
 
   // For error check during sampling
   if (sqwCounter) {
@@ -245,17 +264,17 @@ void loop() {
   }
 
   // Stuff done on idle
-  if (state == STATE_IDLE) {
+  if (state == SampleState::IDLE) {
     onIdle();
   // Stuff on sampling
-  } else if (state == STATE_SAMPLE) {
+  } else if (state == SampleState::SAMPLE) {
     onSampling();
   }
 
   onIdleOrSampling();
   
   // If we only have 200 ms before sampling should start, wait actively
-  if (next_state != STATE_IDLE) {
+  if (next_state != SampleState::IDLE) {
     if (streamConfig.countdown != 0 and (streamConfig.countdown - millis()) < 200) {
       // Disable any wifi sleep mode
       esp_wifi_set_ps(WIFI_PS_NONE);
@@ -281,6 +300,15 @@ char * timeStr() {
   return ttime;
 }
 
+void onMQTTConnect() {
+  logger.log("MQTT connected to %s", mqtt.ip);
+  mqttSubscribe();
+}
+
+void onMQTTDisconnect() {
+  logger.log("MQTT disconnected from %s", mqtt.ip);
+}
+
 void onNetworkConnect() {
   logger.log(ALL, "Network Connected");
   logger.log(ALL, "IP: %s", Network::localIP().toString().c_str());
@@ -291,6 +319,10 @@ void onNetworkConnect() {
 
   // Reinit mdns
   initMDNS();
+
+  // Connect mqtt
+  if (!mqtt.connect()) logger.log(ERROR, "Cannot connect to MQTT Server %s", mqtt.ip);
+
   // Start the TCP server
   server.begin();
   streamServer.begin();
@@ -303,13 +335,16 @@ void onNetworkConnect() {
 void onNetworkDisconnect() {
   logger.log(ERROR, "Network Disconnected");
 
-  if (state != STATE_IDLE) {
+  if (mqtt.connected) mqtt.disconnect();
+  if (state != SampleState::IDLE) {
     logger.log(ERROR, "Stop sampling (Network disconnect)");
     stopSampling();
   }
 }
 
 void onIdleOrSampling() {
+  // MQTT loop
+  mqtt.update();
 
   // Handle serial requests
   if (Serial.available()) {
@@ -374,10 +409,10 @@ void onIdle() {
     streamClient = streamServer.available();
     if (streamClient.connected()) {
       // Set everything to default settings
-      streamConfig.stream = TCP_RAW;
+      streamConfig.stream = StreamType::TCP_RAW;
       streamConfig.prefix = false;
       streamConfig.samplingRate = DEFAULT_SR;
-      streamConfig.measures = STATE_VI;
+      streamConfig.measures = Measures::VI;
       streamConfig.ip = streamClient.remoteIP();
       streamConfig.port = streamClient.remoteIP();
       sendClient = &streamClient;
@@ -420,7 +455,7 @@ void onSampling() {
     long fr = freq;
     freq = 0;
     float frequency = (float)streamConfig.samplingRate/(float)((fr)/1000000.0);//  Logging only works for USB rates smaller 8000Hz
-    if (!(streamConfig.stream == USB and streamConfig.samplingRate > 4000)) {
+    if (!(streamConfig.stream == StreamType::USB and streamConfig.samplingRate > 4000)) {
       logger.log("%.2fHz, %us", frequency, totalSamples);
     }
   }
@@ -428,20 +463,20 @@ void onSampling() {
   // ______________ Handle Disconnect ________________
 
   // NOTE: Cannot detect disconnect for USB
-  if (streamConfig.stream == USB) {
-  } else if (streamConfig.stream == TCP) {
+  if (streamConfig.stream == StreamType::USB) {
+  } else if (streamConfig.stream == StreamType::TCP) {
     if (!sendClient->connected()) {
       logger.log(ERROR, "TCP disconnected while streaming");
       stopSampling();
     }
   // Disconnect of UDP means disconnecting from tcp port
-  } else if (streamConfig.stream == UDP) {
+  } else if (streamConfig.stream == StreamType::UDP) {
     if (!sendClient->connected()) {
       logger.log(ERROR, "TCP/UDP disconnected while streaming");
       stopSampling();
     }
   // Disconnect of raw stream means stop
-  } else if (streamConfig.stream == TCP_RAW) {
+  } else if (streamConfig.stream == StreamType::TCP_RAW) {
     // Check for intended connection loss
     if (!sendClient->connected()) {
       logger.log(INFO, "TCP Stream disconnected");
@@ -453,31 +488,40 @@ void onSampling() {
 // Depending on data sink, send data
 void writeChunks(bool tail) {
   while(ringBuffer.available() > streamConfig.chunkSize) {
-    if (streamConfig.stream == UDP) {
+    if (streamConfig.stream == StreamType::UDP) {
       udpClient.beginPacket(streamConfig.ip, streamConfig.port);
       writeData(udpClient, streamConfig.chunkSize);
       udpClient.endPacket();
-    } else if (streamConfig.stream == TCP) {
+    } else if (streamConfig.stream == StreamType::TCP) {
       writeData(*sendClient, streamConfig.chunkSize);
-    } else if (streamConfig.stream == TCP_RAW) {
+    } else if (streamConfig.stream == StreamType::TCP_RAW) {
       writeData(*sendClient, streamConfig.chunkSize);
-    } else if (streamConfig.stream == USB) {
+    } else if (streamConfig.stream == StreamType::USB) {
       writeData(Serial, streamConfig.chunkSize);
-    }
+    } 
   }
   if (tail) {
-    if (streamConfig.stream == UDP) {
+    if (streamConfig.stream == StreamType::UDP) {
       udpClient.beginPacket(streamConfig.ip, streamConfig.port);
       writeData(udpClient, ringBuffer.available());
       udpClient.endPacket();
-    } else if (streamConfig.stream == TCP) {
+    } else if (streamConfig.stream == StreamType::TCP) {
       writeData(*sendClient, ringBuffer.available());
-    } else if (streamConfig.stream == TCP_RAW) {
+    } else if (streamConfig.stream == StreamType::TCP_RAW) {
       writeData(*sendClient, ringBuffer.available());
-    } else if (streamConfig.stream == USB) {
+    } else if (streamConfig.stream == StreamType::USB) {
       writeData(Serial, ringBuffer.available());
     }
   }
+}
+
+void writeDataMQTT(uint16_t size) {
+  if (size <= 0) return;
+  size_t i = 0;
+  while (i < size) { 
+    i++;
+  }
+  logger.log(ERROR, "TODO implement");
 }
 
 // Data prefix 
@@ -499,7 +543,7 @@ void writeData(Stream &getter, uint16_t size) {
   // Everything is sent at once (hopefully)
   uint32_t sent = getter.write((uint8_t*)&sendbuffer[0], size+start);
   // Terminate with \r\n for usb // TODO: Can we remove this
-  if (streamConfig.stream == USB) getter.write("\r\n"); 
+  if (streamConfig.stream == StreamType::USB) getter.write("\r\n"); 
   if (sent > start) sentSamples += (sent-start)/streamConfig.measurementBytes;
 }
 
@@ -579,9 +623,7 @@ void sample_timer_task( void * parameter) {
   vTaskSuspend( NULL );  // ISR wakes up the task
 
   CurrentADC adc;
-  while(state == STATE_SAMPLE){
-    bool dum;
-
+  while(state == SampleState::SAMPLE){
     BaseType_t xStatus = xQueueReceive( xQueue, &adc, 0);
 
     if(xStatus == pdPASS) {
@@ -608,7 +650,7 @@ void sample_timer_task( void * parameter) {
       }
 
       // For serial there is no need to buffer it anyway
-      if (streamConfig.stream == USB) {
+      if (streamConfig.stream == StreamType::USB) {
         Serial.write((uint8_t*)&values2[0], streamConfig.measurementBytes);
         // Serial.write((uint8_t*)&values2[0], 16);
         Serial.println("");
@@ -658,7 +700,25 @@ void setupOTA() {
   // ArduinoOTA.setPasswordHash("21232f297a57a5a743894a0e4a801fc3");
 
   ArduinoOTA.onStart([]() {
+    updating = true;
     logger.log("Start updating");
+
+
+    for (size_t i = 0; i < MAX_CLIENTS; i++) {
+      if (clientConnected[i]) {
+        // client[i].stop(); 
+        onClientDisconnect(client[i], i);
+        clientConnected[i] = false;
+      }
+    }
+
+    if (streamClient.connected()) streamClient.stop();
+    
+    // Disconnect all connected clients
+    streamServer.stop();
+    streamServer.close();
+    server.stop();
+    server.close();
     // free(buffer);
   });
   ArduinoOTA.onEnd([]() {
@@ -703,28 +763,13 @@ void handleEvent(Stream &getter) {
   logger.log(INFO, command);
   #endif
 
-  // Deserialize the JSON document
-  DeserializationError error = deserializeJson(docRcv, command);
-  // Test if parsing succeeds.
-  if (error) {
-    // Remove all unallowed json characters to prevent error 
-    uint32_t len = strlen(command);
-    if (len > 10) len = 10;
-    for (int i = 0; i < len; i++) {
-      if (command[i] == '\r' || command[i] == '\n' || command[i] == '"' || command[i] == '}' || command[i] == '{') command[i] = '_';
-    }
-    logger.log(ERROR, "deserializeJson() failed: %.10s", &command[0]);
-    return;
-  }
-  //docSend.clear();
-  JsonObject obj = docSend.to<JsonObject>();
-  obj.clear();
+  newGetter = (Stream*)&getter;
+
   response = "";
-  handleJSON(getter);
+  parseCommand();
+  handleJSON();
+
   if (docSend.isNull() == false) {
-    if (docSend["error"].as<bool>()) {
-      logger.log(ERROR, (const char*)docSend["msg"]);
-    }
     getter.flush();
     response = "";
     serializeJson(docSend, response);
@@ -737,6 +782,26 @@ void handleEvent(Stream &getter) {
   command[0] = '\0';
 }
 
+void parseCommand() {
+  // Deserialize the JSON document
+  DeserializationError error = deserializeJson(docRcv, command);
+  
+  // Test if parsing succeeds.
+  if (error) {
+    // Remove all unallowed json characters to prevent error 
+    uint32_t len = strlen(command);
+    if (len > 10) len = 10;
+    for (size_t i = 0; i < len; i++) {
+      if (command[i] == '\r' || command[i] == '\n' || command[i] == '"' || command[i] == '}' || command[i] == '{') command[i] = '_';
+    }
+    logger.log(ERROR, "deserializeJson() failed: %.10s", &command[0]);
+    return;
+  }
+  //docSend.clear();
+  JsonObject obj = docSend.to<JsonObject>();
+  obj.clear();
+}
+
 void setBusyResponse() {
   if (sendClient != NULL) {
     response = "Device with IP: ";
@@ -747,7 +812,7 @@ void setBusyResponse() {
   }
 }
 
-void handleJSON(Stream &getter) {
+void handleJSON() {
   // All commands look like the following:
   // {"cmd":{"name":"commandName", "payload":{<possible data>}}}
   // e.g. mdns
@@ -762,7 +827,7 @@ void handleJSON(Stream &getter) {
   /*********************** SAMPLING COMMAND ****************************/
   // e.g. {"cmd":{"name":"sample", "payload":{"type":"Serial", "rate":4000}}}
   if(strcmp(cmd, CMD_SAMPLE) == 0) {
-    if (state == STATE_IDLE) {
+    if (state == SampleState::IDLE) {
       // For sampling we need type payload and rate payload
       const char* typeC = root["cmd"]["payload"]["type"];
       const char* measuresC = root["cmd"]["payload"]["measures"];
@@ -792,10 +857,10 @@ void handleJSON(Stream &getter) {
         return;
       }
       if (measuresC == nullptr) {
-        streamConfig.measures = STATE_3xVI;
+        streamConfig.measures = Measures::VIVIVI;
         streamConfig.measurementBytes = 24;
       } else if (strcmp(measuresC, "v,i") == 0) {
-        streamConfig.measures = STATE_VI;
+        streamConfig.measures = Measures::VI;
         streamConfig.measurementBytes = 8;
       } else {
         response = "Unsupported measures";
@@ -810,16 +875,19 @@ void handleJSON(Stream &getter) {
       }
       // e.g. {"cmd":{"name":"sample", "payload":{"type":"Serial", "rate":4000}}}
       if (strcmp(typeC, "Serial") == 0) {
-        streamConfig.stream = USB;
+        streamConfig.stream = StreamType::USB;// e.g. {"cmd":{"name":"sample", "payload":{"type":"MQTT", "rate":4000}}}
+      } else if (strcmp(typeC, "MQTT") == 0) {
+        streamConfig.stream = StreamType::MQTT;
       // e.g. {"cmd":{"name":"sample", "payload":{"type":"TCP", "rate":4000}}}
       } else if (strcmp(typeC, "TCP") == 0) {
-        sendClient = (WiFiClient*)&getter; 
-        streamConfig.stream = TCP;
+        sendClient = (WiFiClient*)newGetter; 
+        // sendClient = &client[0]; 
+        streamConfig.stream = StreamType::TCP;
         streamConfig.port = STANDARD_TCP_SAMPLE_PORT;
         streamConfig.ip = sendClient->remoteIP();
       // e.g. {"cmd":{"name":"sample", "payload":{"type":"UDP", "rate":4000}}}
       } else if (strcmp(typeC, "UDP") == 0) {
-        streamConfig.stream = UDP;
+        streamConfig.stream = StreamType::UDP;
         int port = docRcv["cmd"]["payload"]["port"].as<int>();
         if (port > 80000 || port <= 0) {
           streamConfig.port = STANDARD_UDP_PORT;
@@ -830,7 +898,7 @@ void handleJSON(Stream &getter) {
         } else {
           streamConfig.port = port;
         }
-        sendClient = (WiFiClient*)&getter;
+        sendClient = (WiFiClient*)newGetter;
         docSend["port"] = streamConfig.port;
         streamConfig.ip = sendClient->remoteIP();
       } else if (strcmp(typeC, "FFMPEG") == 0) {
@@ -864,7 +932,7 @@ void handleJSON(Stream &getter) {
       docSend["prefix"] = streamConfig.prefix;
       docSend["cmd"] = CMD_SAMPLE;
 
-      next_state = STATE_SAMPLE;
+      next_state = SampleState::SAMPLE;
 
       if (ts != 0) {
         response += F("Should sample at: ");
@@ -939,11 +1007,12 @@ void handleJSON(Stream &getter) {
     docSend["sys_time"] = myTime.timeStr();
     docSend["name"] = config.name;
     docSend["ip"] = Network::localIP().toString();
+    docSend["mqtt_server"] = config.mqttServer;
     docSend["sampling_rate"] = streamConfig.samplingRate;
     docSend["buffer_size"] = ringBuffer.getSize();
     docSend["psram"] = ringBuffer.inPSRAM();
     docSend["rtc"] = rtc.connected;
-    docSend["state"] = state != STATE_IDLE ? "busy" : "idle";
+    docSend["state"] = state != SampleState::IDLE ? "busy" : "idle";
     String ssids = "[";
     for (int i = 0; i < config.numAPs; i++) {
       ssids += config.wifiSSIDs[i];
@@ -956,7 +1025,7 @@ void handleJSON(Stream &getter) {
   /*********************** MDNS COMMAND ****************************/
   // e.g. {"cmd":{"name":"mdns", "payload":{"name":"newName"}}}
   else if (strcmp(cmd, CMD_MDNS) == 0) {
-    if (state == STATE_IDLE) {
+    if (state == SampleState::IDLE) {
       docSend["error"] = true;
       const char* newName = docRcv["cmd"]["payload"]["name"];
       if (newName == nullptr) {
@@ -986,10 +1055,45 @@ void handleJSON(Stream &getter) {
       docSend["state"] = "busy";
     }
   }
+  /*********************** MQTT Server COMMAND ****************************/
+  // e.g. {"cmd":{"name":"mqttServer", "payload":{"server":"<ServerAddress>"}}}
+  else if (strcmp(cmd, CMD_MQTT_SERVER) == 0) {
+    if (state == SampleState::IDLE) {
+      docSend["error"] = true;
+      const char* newServer = docRcv["cmd"]["payload"]["server"];
+      if (newServer == nullptr) {
+        docSend["msg"] = F("MQTTServer address required in payload with key server");
+        return;
+      }
+      if (strlen(newServer) < MAX_IP_LEN) {
+        config.setMQTTServerAddress((char * )newServer);
+      } else {
+        response = F("MQTTServer address too long, only string of size ");
+        response += MAX_IP_LEN;
+        response += F(" allowed");
+        docSend["msg"] = response;
+        return;
+      }
+      char * address = config.mqttServer;
+      response = F("Set MQTTServer address to: ");
+      response += address;
+      //docSend["msg"] = sprintf( %s", name);
+      docSend["msg"] = response;
+      docSend["mqtt_server"] = address;
+      docSend["error"] = false;
+      mqtt.init(config.mqttServer, config.name);
+      mqtt.connect();
+
+    } else {
+      setBusyResponse();
+      docSend["msg"] = response;
+      docSend["state"] = "busy";
+    }
+  }
   /*********************** ADD WIFI COMMAND ****************************/
   // e.g. {"cmd":{"name":"addWifi", "payload":{"ssid":"ssidName","pwd":"pwdName"}}}
   else if (strcmp(cmd, CMD_ADD_WIFI) == 0) {
-    if (state == STATE_IDLE) {
+    if (state == SampleState::IDLE) {
       docSend["error"] = true;
       const char* newSSID = docRcv["cmd"]["payload"]["ssid"];
       const char* newPWD = docRcv["cmd"]["payload"]["pwd"];
@@ -1041,7 +1145,7 @@ void handleJSON(Stream &getter) {
   /*********************** DEl WIFI COMMAND ****************************/
   // e.g. {"cmd":{"name":"delWifi", "payload":{"ssid":"ssidName"}}}
   else if (strcmp(cmd, CMD_REMOVE_WIFI) == 0) {
-    if (state == STATE_IDLE) {
+    if (state == SampleState::IDLE) {
       docSend["error"] = true;
       const char* newSSID = docRcv["cmd"]["payload"]["ssid"];
       if (newSSID == nullptr) {
@@ -1098,7 +1202,7 @@ void handleJSON(Stream &getter) {
   /*********************** Clear Log COMMAND ****************************/
   // e.g. {"cmd":{"name":"clearLog"}}
   else if (strcmp(cmd, CMD_CLEAR_LOG) == 0) {
-    if (state == STATE_IDLE) {
+    if (state == SampleState::IDLE) {
       docSend["error"] = false;
       spiffsLog.clear();
     } else {
@@ -1111,17 +1215,17 @@ void handleJSON(Stream &getter) {
   /*********************** Get Log COMMAND ****************************/
   // e.g. {"cmd":{"name":"getLog"}}
   else if (strcmp(cmd, CMD_GET_LOG) == 0) {
-    if (state == STATE_IDLE) {
+    if (state == SampleState::IDLE) {
       spiffsLog.flush();
       docSend["error"] = false;
       bool hasRow = spiffsLog.nextRow(&command[0]);
-      getter.printf("%s{\"cmd\":\"log\",\"msg\":\"", &LOG_PREFIX[0]);
-      getter.printf("*** LOGFile *** //n");
+      newGetter->printf("%s{\"cmd\":\"log\",\"msg\":\"", &LOG_PREFIX[0]);
+      newGetter->printf("*** LOGFile *** //n");
       while(hasRow) {
-        getter.printf("%s//n", &command[0]);
+        newGetter->printf("%s//n", &command[0]);
         hasRow = spiffsLog.nextRow(&command[0]);
       }
-      getter.println("*** LOGFile *** \"}");
+      newGetter->println("*** LOGFile *** \"}");
     } else {
       setBusyResponse();
       docSend["msg"] = response;
@@ -1139,8 +1243,8 @@ void handleJSON(Stream &getter) {
 void stopSampling() {
   if (rtc.connected) rtc.disableInterrupt(); // TODO
 
-  state = STATE_IDLE;
-  next_state = STATE_IDLE;
+  state = SampleState::IDLE;
+  next_state = SampleState::IDLE;
   
   ade9k.stopSampling();
 
@@ -1173,9 +1277,9 @@ void calcChunkSize() {
   chunkSize = min((int)chunkSize, MAX_SEND_SIZE);
   // For UDP we only allow 512, because no nagle algorithm will split
   // the data into subframes like in the tcp case
-  if (streamConfig.stream == UDP) {
+  if (streamConfig.stream == StreamType::UDP) {
     chunkSize = min((int)chunkSize, 512);
-  } else if (streamConfig.stream == USB) {
+  } else if (streamConfig.stream == StreamType::USB) {
     // For mac we only must read after max 1020 bytes so chunk size must be smaller 
     chunkSize = 128;
     // chunkSize = min((int)chunkSize, 16);
@@ -1194,7 +1298,7 @@ void calcChunkSize() {
  ****************************************************/
 inline void startSampling() {
   // Reset all variables
-  state = STATE_SAMPLE;
+  state = SampleState::SAMPLE;
 
   xTaskCreatePinnedToCore(sample_timer_task,     /* Task function. */
         "sampleTask",       /* String with name of task. */
@@ -1243,6 +1347,99 @@ void initMDNS() {
   MDNS.addService("_elec", "_tcp", STANDARD_TCP_STREAM_PORT);
 }
 
+
+void mqttCallback(char* topic, byte* message, unsigned int length) {
+  memcpy(&command[0], message, length);
+  command[length] = '\0';
+  logger.log("MQTT msg on topic: %s: %s", topic, command);
+
+  // Search for last topic separator
+  size_t topicLen = strlen(topic);
+  // On not found, this will start from the beginning of the topic string
+  int lastSep = -1;
+  for (size_t i = 0; i < topicLen; i++) {
+    if (topic[i] == '\0') break;
+    if (topic[i] == MQTT_TOPIC_SEPARATOR) lastSep = i;
+  }
+  char * topicEnd = &topic[lastSep+1];
+
+
+  if(strcmp(topicEnd, MQTT_TOPIC_CMD) == 0) {
+    // message was already copied to command array
+    parseCommand();
+    handleJSON();
+
+    if (docSend.isNull() == false) {
+      response = "";
+      serializeJson(docSend, response);
+      // This might be too long for the logger
+      logger.log(response.c_str());
+      mqtt.publish(mqttTopicPubInfo, response.c_str());
+    }
+  } else if(strcmp(topicEnd, MQTT_TOPIC_SAMPLE) == 0) {
+    logger.log("MQTT wants sample");
+    float value = -1.0;
+    char unit[4] = {'\0'};
+    if(strcmp(command, "v") == 0) {
+      sprintf(unit, "V");
+    }
+    else if(strcmp(command, "i") == 0) {
+      sprintf(unit, "mA");
+    }
+    else if(strcmp(command, "q") == 0) {
+      sprintf(unit, "var");
+    }
+    else if(strcmp(command, "s") == 0) {
+      sprintf(unit, "VA");
+    // default is active power
+    } else {
+      sprintf(unit, "W");
+    }
+    JsonObject obj = docSend.to<JsonObject>();
+    obj.clear();
+    docSend["value"] = value;
+    docSend["unit"] = unit;
+    docSend["ts"] = myTime.timeStr();
+    response = "";
+    serializeJson(docSend, response);
+    logger.log(response.c_str());
+    mqtt.publish(mqttTopicPubSample, response.c_str());
+  }
+  response = "";
+  command[0] = '\0';
+}
+
+
+/****************************************************
+ * Init the MDNs name from eeprom, only the number ist
+ * stored in the eeprom, construct using prefix.
+ ****************************************************/
+void mqttSubscribe() {
+  if (!mqtt.connected) {
+    logger.log(ERROR, "Sth wrong with mqtt Server");
+    return;
+  }
+
+  // Build publish topics
+  sprintf(&mqttTopicPubSwitch[0], "%s%c", MQTT_TOPIC_BASE, MQTT_TOPIC_SEPARATOR);
+
+  response = mqttTopicPubSwitch;
+  response += "+";
+  logger.log("Subscribing to: %s", response.c_str());
+  mqtt.subscribe(response.c_str());
+  
+  sprintf(&mqttTopicPubSwitch[0], "%s%c%s%c", MQTT_TOPIC_BASE, MQTT_TOPIC_SEPARATOR, config.name, MQTT_TOPIC_SEPARATOR);
+
+  response = mqttTopicPubSwitch;
+  response += "+";
+  logger.log("Subscribing to: %s", response.c_str());
+  mqtt.subscribe(response.c_str());
+  
+  sprintf(&mqttTopicPubSwitch[0], "%s%c%s%c%s%c%s", MQTT_TOPIC_BASE, MQTT_TOPIC_SEPARATOR, config.name, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_STATE, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_SWITCH);
+  sprintf(&mqttTopicPubSample[0], "%s%c%s%c%s%c%s", MQTT_TOPIC_BASE, MQTT_TOPIC_SEPARATOR, config.name, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_STATE, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_SAMPLE);
+  sprintf(&mqttTopicPubInfo[0], "%s%c%s%c%s%c%s", MQTT_TOPIC_BASE, MQTT_TOPIC_SEPARATOR, config.name, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_STATE, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_INFO);
+}
+
 // Make sure enough memory is allocated for str
 void setInfoString(char * str) {
   int idx = 0;
@@ -1256,6 +1453,7 @@ void setInfoString(char * str) {
   } else {
     idx += sprintf(&str[idx], "RAM");
   }
+  idx += sprintf(&str[idx], "\nMQTT Server: %s", config.mqttServer);
 
   if (rtc.connected) {
     idx += sprintf(&str[idx], "\nRTC is connected ");

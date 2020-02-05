@@ -156,6 +156,7 @@ const int RAM_BUF_SIZE = 40*1024;
 #define CMD_REMOVE_WIFI "delWifi"
 #define CMD_CLEAR_LOG "clearLog"
 #define CMD_GET_LOG "getLog"
+#define CMD_MQTT_SERVER "mqttServer"
 
 
 #include <ETH.h>
@@ -170,3 +171,22 @@ const int RAM_BUF_SIZE = 40*1024;
 #define ETH_MDC_PIN     SMI_MDC
 // Pin# of the I²C IO signal for the Ethernet PHY
 #define ETH_MDIO_PIN    SMI_MDIO
+
+
+
+
+
+#define MQTT_TOPIC_BASE "powermeter"
+#define MQTT_TOPIC_SEPARATOR '/'
+#define MQTT_TOPIC_SWITCH "switch"
+#define MQTT_TOPIC_SWITCH_ON "on"
+#define MQTT_TOPIC_SWITCH_OFF "off"
+#define MQTT_TOPIC_SAMPLE "sample"
+#define MQTT_TOPIC_SAMPLING "sampling"
+#define MQTT_TOPIC_STATE "state"
+#define MQTT_TOPIC_CMD "cmd"
+#define MQTT_TOPIC_INFO "info"
+
+const int MAX_MQTT_PUB_TOPIC_SWITCH = sizeof(MQTT_TOPIC_BASE) + sizeof(MQTT_TOPIC_STATE) + sizeof(MQTT_TOPIC_SWITCH) + 4*sizeof(MQTT_TOPIC_SEPARATOR) + 2;
+const int MAX_MQTT_PUB_TOPIC_SAMPLE = sizeof(MQTT_TOPIC_BASE) + sizeof(MQTT_TOPIC_STATE) + sizeof(MQTT_TOPIC_SAMPLE) + 4*sizeof(MQTT_TOPIC_SEPARATOR) + 2;
+const int MAX_MQTT_PUB_TOPIC_INFO = sizeof(MQTT_TOPIC_BASE) + sizeof(MQTT_TOPIC_STATE) + sizeof(MQTT_TOPIC_INFO) + 4*sizeof(MQTT_TOPIC_SEPARATOR) + 2;

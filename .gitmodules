@@ -19,3 +19,6 @@
 [submodule "Firmware/Version_2_0/src/rtc"]
 	path = Firmware/Version_2_0/src/rtc
 	url = https://projects.informatik.uni-freiburg.de/git/smartenergy.powermeter.rtc
+[submodule "Firmware/Version_2_0/src/mqtt"]
+	path = Firmware/Version_2_0/src/mqtt
+	url = https://projects.informatik.uni-freiburg.de/git/smartenergy.powermeter.mqtt

@@ -27,6 +27,7 @@
         "queue": "cpp",
         "random": "cpp",
         "stack": "cpp",
-        "utility": "cpp"
+        "utility": "cpp",
+        "__functional_03": "cpp"
     }
 }
