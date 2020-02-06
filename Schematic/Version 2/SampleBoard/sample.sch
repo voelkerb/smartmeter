@@ -24837,8 +24837,8 @@ did not work</text>
 <segment>
 <pinref part="Q2" gate="G$1" pin="E"/>
 <wire x1="116.84" y1="45.72" x2="116.84" y2="43.18" width="0.1524" layer="91"/>
-<wire x1="116.84" y1="43.18" x2="109.22" y2="43.18" width="0.1524" layer="91"/>
-<label x="109.22" y="43.18" size="1.778" layer="95" rot="MR0" xref="yes"/>
+<wire x1="116.84" y1="43.18" x2="99.06" y2="43.18" width="0.1524" layer="91"/>
+<label x="99.06" y="43.18" size="1.778" layer="95" rot="MR90" xref="yes"/>
 </segment>
 </net>
 <net name="N$29" class="0">
