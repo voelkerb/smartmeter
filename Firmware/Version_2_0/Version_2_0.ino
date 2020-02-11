@@ -42,7 +42,7 @@ Rtc rtc(RTC_INT, SDA, SCL);
 TimeHandler myTime(ntpServerName, LOCATION_TIME_OFFSET, &rtc);
 
 // ADE900 Object
-ADE9000 ade9k(ADE_RESET_PIN, ADE_DREADY_PIN, ADE_SPI_BUS);
+ADE9000 ade9k(ADE_RESET_PIN, ADE_DREADY_PIN, ADE_PM1_PIN, ADE_SPI_BUS);
 
 RingBuffer ringBuffer(PS_BUF_SIZE, true);
 
@@ -199,6 +199,7 @@ void setup() {
   logger.log(DEBUG, "%s @ firmware %s/%s", config.name, __DATE__, __TIME__);
   logger.log(DEBUG, "Core @ %u MHz", coreFreq);
 
+
   success = ringBuffer.init();
   if (!success) logger.log(ERROR, "PSRAM init failed");
   successAll &= success;
@@ -207,6 +208,9 @@ void setup() {
     success = ringBuffer.setSize(RAM_BUF_SIZE, false);
     if (!success) logger.log(ERROR, "RAM init failed: %i bytes", RAM_BUF_SIZE);
   }
+  // NOTE: ERROR LED and ADE PM1 share the same pin.
+  // For normal working condition, PM1 need to be low
+  digitalWrite(ERROR_LED, LOW);
 
   // Setup ADE9000
   ade9k.initSPI(ADE_SCK, ADE_MISO, ADE_MOSI, ADE_CS);
@@ -215,6 +219,7 @@ void setup() {
   successAll &= success;
   
   if (successAll) digitalWrite(ERROR_LED, LOW);
+  else digitalWrite(ERROR_LED, HIGH);
   logger.log(ALL, "Connecting Network");
 
   Network::init(&config, onNetworkConnect, onNetworkDisconnect, true);
@@ -681,7 +686,6 @@ void sample_timer_task( void * parameter) {
         freq = freqCalcNow-freqCalcStart;
         freqCalcStart = freqCalcNow;
         counter = 0;
-
         if(IRAM_timeout) {
           logger.log(ERROR, "Lost interrupt!");
           IRAM_timeout = false;

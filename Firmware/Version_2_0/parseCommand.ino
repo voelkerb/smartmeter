@@ -26,7 +26,7 @@ void handleEvent(Stream &getter) {
     response = "Info:" + response;
     getter.println(response);
     // This will be too long for the logger
-    // logger.log(response.c_str());
+    logger.log(response.c_str());
   }
   response = "";
   command[0] = '\0';
@@ -527,35 +527,57 @@ void mqttCallback(char* topic, byte* message, unsigned int length) {
       logger.log(response.c_str());
       mqtt.publish(mqttTopicPubInfo, response.c_str());
     }
-  } else if(strcmp(topicEnd, MQTT_TOPIC_SAMPLE) == 0) {
+  }  
+  // state request (like info)
+  else if(strcmp(topicEnd, MQTT_TOPIC_STATE) == 0) {
+    JsonObject obj = docSend.to<JsonObject>();
+    obj.clear();
+    docSend["sampleState"] = state == SampleState::IDLE ? "idle" : "sampling";
+    docSend["ts"] = myTime.timeStr();
+    response = "";
+    serializeJson(docSend, response);
+    logger.log(response.c_str());
+    mqtt.publish(mqttTopicPubInfo, response.c_str());
+  } 
+  // Request a sample
+  // TODO: Implement
+  else if(strcmp(topicEnd, MQTT_TOPIC_SAMPLE) == 0) {
     logger.log("MQTT wants sample");
-    float value = -1.0;
+    float value[4] = {-1.0};
     char unit[4] = {'\0'};
     if(strcmp(command, "v") == 0) {
+      ade9k.readVoltageRMS(&value[0]);
       sprintf(unit, "V");
     }
     else if(strcmp(command, "i") == 0) {
+      ade9k.readCurrentRMS(&value[0]);
       sprintf(unit, "mA");
     }
     else if(strcmp(command, "q") == 0) {
+      ade9k.readReactivePower(&value[0]);
       sprintf(unit, "var");
     }
     else if(strcmp(command, "s") == 0) {
+      ade9k.readApparentPower(&value[0]);
       sprintf(unit, "VA");
     // default is active power
     } else {
+      ade9k.readActivePower(&value[0]);
       sprintf(unit, "W");
     }
     JsonObject obj = docSend.to<JsonObject>();
     obj.clear();
-    docSend["value"] = value;
+
+    char valuestr[40];
+    snprintf(valuestr, 40, "%.2f,%.2f,%.2f", value[0], value[1], value[2]);
+    docSend["value"] = valuestr;
     docSend["unit"] = unit;
     docSend["ts"] = myTime.timeStr();
     response = "";
     serializeJson(docSend, response);
     logger.log(response.c_str());
-    mqtt.publish(mqttTopicPubSample, response.c_str());
+    mqtt.publish(mqttTopicPubInfo, response.c_str());
   }
-  response = "";
-  command[0] = '\0';
+  // response = "";
+  // command[0] = '\0';
 }

@@ -86,6 +86,8 @@ const char LOG_PREFIX[] = "Info:";
 #define ADE_SPI_BUS VSPI
 // // TODO: Change
 #define ADE_RESET_PIN   IO2
+// NOTE: Sharing the same pin as ERROR LED; Obacht  
+#define ADE_PM1_PIN   IO4
 // // Event Pin/Data Ready
 #define ADE_DREADY_PIN    IO34
 
@@ -174,6 +176,7 @@ const int RAM_BUF_SIZE = 40*1024;
 
 
 
+#define MAX_STRING_LENGTH_STACK 40
 
 
 #define MQTT_TOPIC_BASE "powermeter"
