@@ -16,7 +16,7 @@ void handleEvent(Stream &getter) {
   newGetter = (Stream*)&getter;
 
   response = "";
-  parseCommand();
+  if (!parseCommand()) return;
   handleJSON();
 
   if (docSend.isNull() == false) {
