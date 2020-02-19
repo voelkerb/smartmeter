@@ -24,6 +24,7 @@
 #define TCP_UPDATE_INTERVAL 100
 #define LIFENESS_UPDATE_INTERVAL 1000
 #define RTC_UPDATE_INTERVAL 30000
+#define STREAM_SERVER_UPDATE_INTERVAL 30000
 
 // We allow a max of 3 tcp clients for performance reasons
 #define MAX_CLIENTS 3
@@ -35,7 +36,8 @@ const char* ntpServerName = "time.uni-freiburg.de";//"0.de.pool.ntp.org";
 const char LOG_PREFIX_SERIAL[] = "Info:";
 const char LOG_PREFIX[] = "Info:";
 
-
+const char DATA_PREFIX[] = "Data:";
+const size_t PREFIX_SIZE = strlen(DATA_PREFIX); 
 
 
 // All available pins of ESP32
@@ -159,6 +161,7 @@ const int RAM_BUF_SIZE = 40*1024;
 #define CMD_CLEAR_LOG "clearLog"
 #define CMD_GET_LOG "getLog"
 #define CMD_MQTT_SERVER "mqttServer"
+#define CMD_STREAM_SERVER "streamServer"
 
 
 #include <ETH.h>

@@ -408,6 +408,39 @@ void handleJSON() {
       docSend["state"] = "busy";
     }
   }
+  /*********************** Stream Server COMMAND ****************************/
+  // e.g. {"cmd":"streamServer", "payload":{"server":"<ServerAddress>"}}
+  else if (strcmp(cmd, CMD_STREAM_SERVER) == 0) {
+    if (state == SampleState::IDLE) {
+      docSend["error"] = true;
+      const char* newServer = docRcv["payload"]["server"];
+      if (newServer == nullptr) {
+        docSend["msg"] = F("StreamServer address required in payload with key server");
+        return;
+      }
+      if (strlen(newServer) < MAX_IP_LEN) {
+        config.setStreamServerAddress((char * )newServer);
+      } else {
+        response = F("StreamServer address too long, only string of size ");
+        response += MAX_IP_LEN;
+        response += F(" allowed");
+        docSend["msg"] = response;
+        return;
+      }
+      char * address = config.streamServer;
+      response = F("Set StreamServer address to: ");
+      response += address;
+      //docSend["msg"] = sprintf( %s", name);
+      docSend["msg"] = response;
+      docSend["stream_server"] = address;
+      docSend["error"] = false;
+      initStreamServer();
+    } else {
+      setBusyResponse();
+      docSend["msg"] = response;
+      docSend["state"] = "busy";
+    }
+  }
   /*********************** ADD WIFI COMMAND ****************************/
   // e.g. {"cmd":"addWifi", "payload":{"ssid":"ssidName","pwd":"pwdName"}}
   else if (strcmp(cmd, CMD_ADD_WIFI) == 0) {
