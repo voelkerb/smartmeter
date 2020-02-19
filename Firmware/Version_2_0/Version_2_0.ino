@@ -548,7 +548,7 @@ void onClientDisconnect(WiFiClient &oldClient, int i) {
 }
 
 /****************************************************
- * Write all remaining chunks of data over channel
+ * Write chunks of data for TCP and Serial
  * depending on data sink
  ****************************************************/
 void writeChunks(bool tail) {
@@ -560,6 +560,10 @@ void writeChunks(bool tail) {
   }
 }
 
+/****************************************************
+ * Write data via UDP, this requires special packet
+ * handling
+ ****************************************************/
 void writeChunksUDP(bool tail) {
   while(ringBuffer.available() > streamConfig.chunkSize) {
     udpClient.beginPacket(streamConfig.ip, streamConfig.port);

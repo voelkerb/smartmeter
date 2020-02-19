@@ -148,7 +148,6 @@ const int RAM_BUF_SIZE = 40*1024;
 
 // Communication commands
 #define CMD_SAMPLE "sample"
-#define CMD_PUSH "push"
 #define CMD_STOP "stop"
 #define CMD_RESTART "restart"
 #define CMD_RESET "factoryReset"

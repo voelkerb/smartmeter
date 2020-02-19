@@ -239,7 +239,7 @@ void handleJSON() {
       docSend["chunk_size"] = streamConfig.chunkSize;
       docSend["sampling_rate"] = streamConfig.samplingRate;
       docSend["conn_type"] = typeC;
-      docSend["measurement_bytes"] = streamConfig.measurementBytes;
+      docSend["measurements"] = streamConfig.numValues;
       docSend["prefix"] = streamConfig.prefix;
       docSend["cmd"] = CMD_SAMPLE;
       docSend["unit"] = streamConfig.unit;
