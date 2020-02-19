@@ -70,7 +70,7 @@ volatile uint32_t timer_now;
 
 
 // Internal state machine for sampling
-enum class SampleState{IDLE, SAMPLE};
+enum class SampleState{IDLE, SAMPLE, SAMPLE_LATCHED};
 
 SampleState state = SampleState::IDLE;
 SampleState next_state = SampleState::IDLE;
@@ -78,13 +78,13 @@ SampleState next_state = SampleState::IDLE;
 // Define it before StreamType enum redefines it
 MQTT mqtt;
 
-// Available measures are VOLTAGE+CURRENT, ACTIVE+REACTIVE Power or both
-enum class Measures{VIVIVI, VI};
+// Available measures are VOLTAGE+CURRENT, ACTIVE+REACTIVE Power or RMS
+enum class Measures{VI, VI_L1, VI_L2, VI_L3, VI_RMS, PQ};
 enum class StreamType{USB, TCP, UDP, TCP_RAW, MQTT};
 
 struct StreamConfig {
   bool prefix = false;                      // Send data with "data:" prefix
-  Measures measures = Measures::VIVIVI;           // The measures to send
+  Measures measures = Measures::VI;           // The measures to send
   uint8_t measurementBytes = 24;             // Number of bytes for each measurement entry
   unsigned int samplingRate = DEFAULT_SR;   // The samplingrate
   StreamType stream = StreamType::USB;                  // Channel over which to send
@@ -92,6 +92,8 @@ struct StreamConfig {
   uint32_t chunkSize = 0;                   // Chunksize of one packet sent
   IPAddress ip;                             // Ip address of data sink
   uint16_t port = STANDARD_TCP_SAMPLE_PORT; // Port of data sink
+  char unit[20] = {'\0'};
+  size_t numValues = 24/sizeof(float);
 };
 
 StreamConfig streamConfig;
@@ -116,6 +118,7 @@ WiFiClient streamClient;
 // Init getter to point to sth, might not work otherwise
 Stream * newGetter = (Stream*)&Serial;
 // tcp stuff is send over this client 
+Stream * sendStream = (Stream*)&Serial;
 WiFiClient * sendClient;
 // UDP used for streaming
 WiFiUDP udpClient;
@@ -124,6 +127,7 @@ WiFiUDP udpClient;
 char command[COMMAND_MAX_SIZE] = {'\0'};
 StaticJsonDocument<2*COMMAND_MAX_SIZE> docRcv;
 StaticJsonDocument<2*COMMAND_MAX_SIZE> docSend;
+StaticJsonDocument<COMMAND_MAX_SIZE> docSample;
 String response = "";
 
 // Information about the current sampling period
@@ -143,6 +147,8 @@ long rtcUpdate = millis();
 // Current CPU speed
 unsigned int coreFreq = 0;
 
+void (*outputWriter)(bool) = &writeChunks;
+
 // test stuff
 long testMillis = 0;
 long testMillis2 = 0;
@@ -156,6 +162,8 @@ volatile int sqwCounter = 0;
 
 volatile uint32_t interruptSamples = 0;
 
+// Must be large enough to handle maximum mnumber of floats for one measurement
+// e.g. V_L1, V_L2, V_L3, I_L1, I_L2, I_L3
 float values[7] = {0};
 
 TaskHandle_t xHandle = NULL;
@@ -166,6 +174,10 @@ char mqttTopicPubSwitch[MAX_MQTT_PUB_TOPIC_SWITCH+MAX_NAME_LEN] = {'\0'};
 char mqttTopicPubSample[MAX_MQTT_PUB_TOPIC_SAMPLE+MAX_NAME_LEN] = {'\0'};
 char mqttTopicPubInfo[MAX_MQTT_PUB_TOPIC_INFO+MAX_NAME_LEN] = {'\0'};
 
+
+// HW Timer and mutex for sapmpling ISR
+hw_timer_t * timer = NULL;
+portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 
 /************************ SETUP *************************/
 void setup() {
@@ -193,6 +205,7 @@ void setup() {
 
   bool success = rtc.init();
   
+  config.init();
   config.load();
 
   coreFreq = getCpuFrequencyMhz();
@@ -234,6 +247,8 @@ void setup() {
   mqtt.onDisconnect = &onMQTTDisconnect;
   mqtt.onMessage = &mqttCallback;
 
+  timer_init();
+
   setInfoString(&command[0]);
   logger.log(&command[0]);
 
@@ -272,7 +287,7 @@ void loop() {
   if (state == SampleState::IDLE) {
     onIdle();
   // Stuff on sampling
-  } else if (state == SampleState::SAMPLE) {
+  } else {
     onSampling();
   }
 
@@ -289,7 +304,11 @@ void loop() {
       int32_t mydelta = streamConfig.countdown - millis();
       // Waiting here is not nice, but we wait for zero crossing
       if (mydelta > 0) delay(mydelta-1);
-      startSampling();
+      if (state == SampleState::SAMPLE) {
+        startSampling();
+      } else {
+        startLatchedSampling(true);
+      }
       // Reset sampling countdown
       streamConfig.countdown = 0;
     }
@@ -377,7 +396,8 @@ void onIdle() {
       streamConfig.measures = Measures::VI;
       streamConfig.ip = streamClient.remoteIP();
       streamConfig.port = streamClient.remoteIP();
-      sendClient = &streamClient;
+      sendClient = (WiFiClient*)&streamClient;
+      sendStream = sendClient;
       startSampling();
     }
   }
@@ -388,7 +408,7 @@ void onIdle() {
  ****************************************************/
 void onSampling() {
   // ______________ Send data to sink ________________
-  writeChunks(false);
+  outputWriter(false);
 
   // Output sampling frequency regularly
   if (freq != 0) {
@@ -419,7 +439,12 @@ void onSampling() {
   } else if (streamConfig.stream == StreamType::TCP_RAW) {
     // Check for intended connection loss
     if (!sendClient->connected()) {
-      logger.log(INFO, "TCP Stream disconnected");
+      logger.log(INFO, "TCP Stream disconnected while streaming");
+      stopSampling();
+    }
+  } else if (streamConfig.stream == StreamType::MQTT) {
+    if (!mqtt.connected) {
+      logger.log(ERROR, "MQTT Server disconnected while streaming");
       stopSampling();
     }
   }
@@ -528,30 +553,23 @@ void onClientDisconnect(WiFiClient &oldClient, int i) {
  ****************************************************/
 void writeChunks(bool tail) {
   while(ringBuffer.available() > streamConfig.chunkSize) {
-    if (streamConfig.stream == StreamType::UDP) {
-      udpClient.beginPacket(streamConfig.ip, streamConfig.port);
-      writeData(udpClient, streamConfig.chunkSize);
-      udpClient.endPacket();
-    } else if (streamConfig.stream == StreamType::TCP) {
-      writeData(*sendClient, streamConfig.chunkSize);
-    } else if (streamConfig.stream == StreamType::TCP_RAW) {
-      writeData(*sendClient, streamConfig.chunkSize);
-    } else if (streamConfig.stream == StreamType::USB) {
-      writeData(Serial, streamConfig.chunkSize);
-    } 
+    writeData(*sendStream, streamConfig.chunkSize);
   }
   if (tail) {
-    if (streamConfig.stream == StreamType::UDP) {
-      udpClient.beginPacket(streamConfig.ip, streamConfig.port);
-      writeData(udpClient, ringBuffer.available());
-      udpClient.endPacket();
-    } else if (streamConfig.stream == StreamType::TCP) {
-      writeData(*sendClient, ringBuffer.available());
-    } else if (streamConfig.stream == StreamType::TCP_RAW) {
-      writeData(*sendClient, ringBuffer.available());
-    } else if (streamConfig.stream == StreamType::USB) {
-      writeData(Serial, ringBuffer.available());
-    }
+    writeData(*sendStream, ringBuffer.available());
+  }
+}
+
+void writeChunksUDP(bool tail) {
+  while(ringBuffer.available() > streamConfig.chunkSize) {
+    udpClient.beginPacket(streamConfig.ip, streamConfig.port);
+    writeData(udpClient, streamConfig.chunkSize);
+    udpClient.endPacket();
+  }
+  if (tail) {
+    udpClient.beginPacket(streamConfig.ip, streamConfig.port);
+    writeData(udpClient, ringBuffer.available());
+    udpClient.endPacket();
   }
 }
 
@@ -559,13 +577,23 @@ void writeChunks(bool tail) {
  * Write data to mqtt sink, this requires special
  * formatiing of the data
  ****************************************************/
-void writeDataMQTT(uint16_t size) {
-  if (size <= 0) return;
-  size_t i = 0;
-  while (i < size) { 
-    i++;
+void writeDataMQTT(bool tail) {
+  if(ringBuffer.available() < streamConfig.measurementBytes) return;
+
+
+  while(ringBuffer.available() >= streamConfig.measurementBytes) {
+    ringBuffer.read((uint8_t*)&values[0], streamConfig.measurementBytes);
+    for (int i = 0; i < streamConfig.numValues; i++) docSample["values"][i] = values[i];
+    // JsonArray array = docSend["values"].to<JsonArray>();
+    // for (int i = 0; i < streamConfig.numValues; i++) array.add(value[i]);
+    // docSend["unit"] = streamConfig.unit;
+    docSample["ts"] = myTime.timeStr();
+    response = "";
+    serializeJson(docSample, response);
+    // logger.log(response.c_str());
+    mqtt.publish(mqttTopicPubInfo, response.c_str());
+    sentSamples++;
   }
-  logger.log(ERROR, "TODO implement");
 }
 
 /****************************************************
@@ -591,38 +619,9 @@ void writeData(Stream &getter, uint16_t size) {
   // Terminate with \r\n for usb // TODO: Can we remove this
   if (streamConfig.stream == StreamType::USB) getter.write("\r\n"); 
   if (sent > start) sentSamples += (sent-start)/streamConfig.measurementBytes;
+  // sentSamples += size/streamConfig.measurementBytes;
 }
 
-
-/****************************************************
- * A SQWV signal from the RTC is generated, we
- * use this signal to handle second tasks and
- * on sampling make sure that we achieve
- * the appropriate <samplingrate> samples each second
- ****************************************************/
-void IRAM_ATTR sqwvTriggered() {
-  // // Disable timer if not already done in ISR
-  // timerAlarmDisable(timer);
-  // Reset counter if not already done in ISR
-  // testSamples = counter;
-  
-  // timerAlarmWrite(timer, TIMER_CYCLES_FAST, true);
-  // We take one sample and enable the timing interrupt afterwards
-  // this should allow the ISR e.g. at 4kHz to take 3999 samples during the next second
-  // timerWrite(timer, 0);
-  // sample_ISR();
-  // Enable timer
-  // timerAlarmEnable(timer);
-  // indicate to main that a second has passed and store time 
-  portENTER_CRITICAL_ISR(&sqwMux);
-  sqwCounter++;
-  portEXIT_CRITICAL(&sqwMux);
-  portENTER_CRITICAL_ISR(&intterruptSamplesMux);
-  interruptSamples = 0;
-  portEXIT_CRITICAL(&intterruptSamplesMux);
-  
-  testMillis2 = millis();
-}
 
 
 /****************************************************
@@ -671,8 +670,15 @@ long bufftimer = millis();
 void sample_timer_task( void * parameter) {
   vTaskSuspend( NULL );  // ISR wakes up the task
 
+  // We can only get all data from adc, if we want a single phase, skip the rest
+  uint8_t offset = 0;
+  if (streamConfig.measures == Measures::VI) offset = 0;
+  else if (streamConfig.measures == Measures::VI_L1) offset = 0;
+  else if (streamConfig.measures == Measures::VI_L2) offset = 2;
+  else if (streamConfig.measures == Measures::VI_L3) offset = 4;
+
   CurrentADC adc;
-  while(state == SampleState::SAMPLE){
+  while(state != SampleState::IDLE){
     BaseType_t xStatus = xQueueReceive( xQueue, &adc, 0);
 
     if(xStatus == pdPASS) {
@@ -699,7 +705,7 @@ void sample_timer_task( void * parameter) {
 
       // For serial there is no need to buffer it anyway
       if (streamConfig.stream == StreamType::USB) {
-        Serial.write((uint8_t*)&values2[0], streamConfig.measurementBytes);
+        Serial.write((uint8_t*)&values2[offset], streamConfig.measurementBytes);
         // Serial.write((uint8_t*)&values2[0], 16);
         Serial.println("");
       } else {
@@ -719,7 +725,7 @@ void sample_timer_task( void * parameter) {
         //   sendstart = 0;
         // }
 
-        bool success = ringBuffer.write((uint8_t*)&values2[0], streamConfig.measurementBytes);
+        bool success = ringBuffer.write((uint8_t*)&(values2[offset]), streamConfig.measurementBytes);
         if (!success and millis() - bufftimer > 1000) {
           bufftimer = millis();
           logger.log(ERROR, "Overflow during ringBuffer write");
@@ -737,6 +743,90 @@ void sample_timer_task( void * parameter) {
   vTaskDelete( NULL );
 }
 
+
+/****************************************************
+ * Sampling interrupt, must be small and quick
+ ****************************************************/
+static SemaphoreHandle_t timer_sem;
+volatile uint32_t mytime = micros();
+void IRAM_ATTR latched_sample_ISR() {
+  static BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+  xSemaphoreGiveFromISR(timer_sem, &xHigherPriorityTaskWoken);
+  if ( xHigherPriorityTaskWoken) {
+    portYIELD_FROM_ISR(); // this wakes up sample_timer_task immediately
+  }
+}
+
+/****************************************************
+ * RTOS task for sampling
+ ****************************************************/
+void IRAM_ATTR latched_sample_timer_task(void *param) {
+  timer_sem = xSemaphoreCreateBinary();
+
+  float data[7] = { 0.0 };
+  int test = 0;
+
+  while (state != SampleState::IDLE) {
+    xSemaphoreTake(timer_sem, portMAX_DELAY);
+    
+    // Vaiables for frequency count
+    counter++;
+    totalSamples++;
+    if (counter >= streamConfig.samplingRate) {
+      freqCalcNow = micros();
+      freq = freqCalcNow-freqCalcStart;
+      freqCalcStart = freqCalcNow;
+      counter = 0;
+      if (rtc.connected) timerAlarmDisable(timer);
+    }
+
+    if (streamConfig.measures == Measures::VI_RMS) {
+      ade9k.readVoltageRMS(&data[0]);
+      ade9k.readCurrentRMS(&data[3]);
+    } else if (streamConfig.measures == Measures::PQ) {
+      ade9k.readActivePower(&data[0]);
+      ade9k.readReactivePower(&data[3]);
+    }
+    if (!ringBuffer.write((uint8_t*)&data[0], streamConfig.measurementBytes)) {
+      logger.log(ERROR, "Cannot fill ringbuffer");
+    }
+
+  }
+  vTaskDelete( NULL );
+}
+
+/****************************************************
+ * A SQWV signal from the RTC is generated, we
+ * use this signal to handle second tasks and
+ * on sampling make sure that we achieve
+ * the appropriate <samplingrate> samples each second
+ ****************************************************/
+void IRAM_ATTR sqwvTriggered() {
+  // // Disable timer if not already done in ISR
+  // timerAlarmDisable(timer);
+  // Reset counter if not already done in ISR
+  // testSamples = counter;
+  
+  if (state == SampleState::SAMPLE_LATCHED) {
+    // We take one sample and enable the timing interrupt afterwards
+    // this should allow the ISR e.g. at 4kHz to take 3999 samples during the next second
+    timerWrite(timer, 0);
+    latched_sample_ISR();
+    // Enable timer
+    timerAlarmEnable(timer);
+  } else {
+    portENTER_CRITICAL_ISR(&intterruptSamplesMux);
+    interruptSamples = 0;
+    portEXIT_CRITICAL(&intterruptSamplesMux);
+  }
+  // indicate to main that a second has passed and store time 
+  portENTER_CRITICAL_ISR(&sqwMux);
+  sqwCounter++;
+  portEXIT_CRITICAL(&sqwMux);
+  
+  testMillis2 = millis();
+}
+
 /****************************************************
  * Setup the OTA updates progress
  ****************************************************/
@@ -751,6 +841,7 @@ void setupOTA() {
   // ArduinoOTA.setPasswordHash("21232f297a57a5a743894a0e4a801fc3");
 
   ArduinoOTA.onStart([]() {
+    Network::allowNetworkChange = false;
     updating = true;
     logger.log("Start updating");
 
@@ -806,10 +897,14 @@ void setupOTA() {
 void stopSampling() {
   if (rtc.connected) rtc.disableInterrupt(); // TODO
 
+  if (state == SampleState::SAMPLE) {
+    ade9k.stopSampling();
+  } else {
+    turnInterrupt(false);
+  }
+
   state = SampleState::IDLE;
   next_state = SampleState::IDLE;
-  
-  ade9k.stopSampling();
 
   samplingDuration = millis() - startSamplingMillis;
   if (streamClient && streamClient.connected()) streamClient.stop();
@@ -817,6 +912,7 @@ void stopSampling() {
   streamConfig.countdown = 0;
   lifenessUpdate = millis();
   mdnsUpdate = millis();
+  sampleCB();
 }
 
 /****************************************************
@@ -862,7 +958,7 @@ void calcChunkSize() {
 inline void startSampling() {
   // Reset all variables
   state = SampleState::SAMPLE;
-
+  sampleCB();
   xTaskCreatePinnedToCore(sample_timer_task,     /* Task function. */
         "sampleTask",       /* String with name of task. */
         4096*2,            /* Stack size in words. */
@@ -891,6 +987,84 @@ inline void startSampling() {
 }
 
 
+/****************************************************
+ * Start latched Sampling requires to start the interrupt
+ * to calculate the chunkSize size depending on
+ * the samplingrate currently set. Furthermore,
+ * all buffer indices are reset to the default values.
+ ****************************************************/
+void startLatchedSampling(bool waitVoltage) {
+  // Reset all variables
+  state = SampleState::SAMPLE_LATCHED;
+  sampleCB();
+  xTaskCreatePinnedToCore(  latched_sample_timer_task,     /* Task function. */
+    "Consumer",       /* String with name of task. */
+    4096,            /* Stack size in words. */
+    NULL,             /* Parameter passed as input of the task */
+    10,                /* Priority of the task. */
+    &xHandle,            /* Task handle. */
+    1);
+
+  counter = 0;
+  sentSamples = 0;
+  totalSamples = 0;
+  TIMER_CYCLES_FAST = (1000000) / streamConfig.samplingRate; // Cycles between HW timer inerrupts
+  calcChunkSize();
+  ringBuffer.reset();
+  samplingDuration = 0;
+  packetNumber = 0;
+  // This will reset the sqwv pin
+  firstSqwv = true;
+  sqwCounter = 0;
+  if (rtc.connected) rtc.enableInterrupt(1, sqwvTriggered);
+  // If we should wait for voltage to make positive zerocrossing
+  if (waitVoltage) {
+    float values[3] = {1.0};
+    while(values[0] > 0) {
+      ade9k.readVoltageRMS(&values[0]);
+      delay(2);
+      yield();
+    }
+    while(values[0] < 0) {
+      ade9k.readVoltageRMS(&values[0]); 
+      delay(2);
+      yield();
+    }
+  }
+  freqCalcNow = millis();
+  freqCalcStart = millis();
+  startSamplingMillis = millis();
+  turnInterrupt(true);
+}
+
+/****************************************************
+ * Detach or attach interupt for latched sampling
+ ****************************************************/
+void turnInterrupt(bool on) {
+  cli();//stop interrupts
+  if (on) {
+    // timer_init();
+    // The timer runs at 80 MHZ, independent of cpu clk
+    timerAlarmWrite(timer, TIMER_CYCLES_FAST, true);
+    timerWrite(timer, 0);
+    timerAlarmEnable(timer);
+  } else {
+    if (timer != NULL) timerAlarmDisable(timer);
+    // timer = NULL;
+  }
+  sei();
+}
+
+/****************************************************
+ * Init the timer of the esp32
+ ****************************************************/
+void timer_init() {
+  // Timer base freq is 80Mhz
+  timer = NULL;
+  // Make a 1 Mhz clk here
+  timer = timerBegin(0, 80, true);
+  timerAttachInterrupt(timer, &latched_sample_ISR, true);
+}
 /****************************************************
  * Init the MDNs name from eeprom, only the number ist
  * stored in the eeprom, construct using prefix.
@@ -987,5 +1161,7 @@ void setInfoString(char * str) {
  * Callback if sampling will be perfomed
  ****************************************************/
 void sampleCB() {
-  if (mqtt.connected) mqtt.publish(mqttTopicPubSample, state==SampleState::SAMPLE ? MQTT_TOPIC_SWITCH_ON : MQTT_TOPIC_SWITCH_OFF);
+  if (mqtt.connected) mqtt.publish(mqttTopicPubSample, state==SampleState::IDLE ? MQTT_TOPIC_SWITCH_OFF: MQTT_TOPIC_SWITCH_ON);
+  // Do not allow network changes on sampling
+  Network::allowNetworkChange = state==SampleState::IDLE ? false : true;
 }

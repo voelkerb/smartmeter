@@ -35,7 +35,7 @@ void handleEvent(Stream &getter) {
 /****************************************************
  * Decode JSON command from string to json dictionary
  ****************************************************/
-void parseCommand() {
+bool parseCommand() {
   // Deserialize the JSON document
   DeserializationError error = deserializeJson(docRcv, command);
   
@@ -48,11 +48,12 @@ void parseCommand() {
       if (command[i] == '\r' || command[i] == '\n' || command[i] == '"' || command[i] == '}' || command[i] == '{') command[i] = '_';
     }
     logger.log(ERROR, "deserializeJson() failed: %.10s", &command[0]);
-    return;
+    return false;
   }
   //docSend.clear();
   JsonObject obj = docSend.to<JsonObject>();
   obj.clear();
+  return true;
 }
 
 /****************************************************
@@ -105,43 +106,89 @@ void handleJSON() {
         docSend["msg"] = response;
         return;
       }
-      // We can only do these rates
-      if (32000%rate == 0) {
-        if (rate <= 8000) intSamplingRate = 8000;
-        else intSamplingRate = 32000;
-        int leavout = intSamplingRate/rate;
-        leavoutSamples = leavout;
-      } else {
-        response = "SamplingRate could not be set to ";
-        response += rate;
-        docSend["msg"] = response;
-        return;
-      }
+ 
+      streamConfig.measurementBytes = 8;
+      bool latchMode = false;
+      sprintf(streamConfig.unit, "mA,V");
+
       if (measuresC == nullptr) {
-        streamConfig.measures = Measures::VIVIVI;
-        streamConfig.measurementBytes = 24;
-      } else if (strcmp(measuresC, "v,i") == 0) {
         streamConfig.measures = Measures::VI;
-        streamConfig.measurementBytes = 8;
+        streamConfig.measurementBytes = 24;
+        sprintf(streamConfig.unit, "mA,V,mA,V,mA,V");
+      } else if (strcmp(measuresC, "v,i_L1") == 0 or strcmp(measuresC, "v,i") == 0) {
+        streamConfig.measures = Measures::VI_L1;
+      } else if (strcmp(measuresC, "v,i_L2") == 0) {
+        streamConfig.measures = Measures::VI_L2;
+      } else if (strcmp(measuresC, "v,i_L3") == 0) {
+        streamConfig.measures = Measures::VI_L3;
+      } else if (strcmp(measuresC, "p,q") == 0) {
+        streamConfig.measures = Measures::PQ;
+        streamConfig.measurementBytes = 24;
+        sprintf(streamConfig.unit, "W,W,W,VAR,VAR,VAR");
+        // PQ only possible in latchMode
+        latchMode = true;
+      } else if (strcmp(measuresC, "v,i_RMS") == 0) {
+        streamConfig.measures = Measures::VI_RMS;
+        streamConfig.measurementBytes = 24;
+        sprintf(streamConfig.unit, "V,V,V,mA,mA,mA");
+        // RMS only possible in latchMode
+        latchMode = true;
       } else {
         response = "Unsupported measures";
         response += measuresC;
         docSend["msg"] = response;
         return;
       }
+      streamConfig.numValues = streamConfig.measurementBytes/sizeof(float);
+      
+      // Only important for MQTT sampling
+      JsonObject obj = docSample.to<JsonObject>();
+      obj.clear();
+      docSample["unit"] = streamConfig.unit;
+      JsonArray array = docSample["values"].to<JsonArray>();
+      for (int i = 0; i < streamConfig.numValues; i++) array.add(0.0f);
+
+      if (not latchMode) {
+        // We can only do these rates
+        if (32000%rate == 0) {
+          if (rate <= 8000) intSamplingRate = 8000;
+          else intSamplingRate = 32000;
+          int leavout = intSamplingRate/rate;
+          leavoutSamples = leavout;
+        } else {
+          response = "SamplingRate could not be set to ";
+          response += rate;
+          docSend["msg"] = response;
+          return;
+        }
+      // latchmode: Max samplingrate is 50Hz
+      } else {
+        if (rate > 50) {
+          response = "SamplingRate cannot be higher than 50Hz in latch mode: ";
+          response += measuresC;
+          response += " sampling";
+          docSend["msg"] = response;
+          return;
+        }
+      }
+
       streamConfig.prefix = true;
       // If we do not want a prefix, we have to disable this if not at extra port
       if (!prefixVariant.isNull()) {
         streamConfig.prefix = prefix;
       }
+      outputWriter = &writeChunks;
       // e.g. {"cmd":"sample", "payload":{"type":"Serial", "rate":4000}}
       if (strcmp(typeC, "Serial") == 0) {
         streamConfig.stream = StreamType::USB;// e.g. {"cmd":"sample", "payload":{"type":"MQTT", "rate":4000}}
+        sendStream = (Stream*)&Serial; 
       } else if (strcmp(typeC, "MQTT") == 0) {
         streamConfig.stream = StreamType::MQTT;
+        outputWriter = &writeDataMQTT;
       // e.g. {"cmd":"sample", "payload":{"type":"TCP", "rate":4000}}
       } else if (strcmp(typeC, "TCP") == 0) {
-        sendClient = (WiFiClient*)newGetter; 
+        sendClient = (WiFiClient*)newGetter;
+        sendStream = sendClient; 
         // sendClient = &client[0]; 
         streamConfig.stream = StreamType::TCP;
         streamConfig.port = STANDARD_TCP_SAMPLE_PORT;
@@ -159,7 +206,9 @@ void handleJSON() {
         } else {
           streamConfig.port = port;
         }
+        outputWriter = &writeChunksUDP;
         sendClient = (WiFiClient*)newGetter;
+        sendStream = sendClient; 
         docSend["port"] = streamConfig.port;
         streamConfig.ip = sendClient->remoteIP();
       } else if (strcmp(typeC, "FFMPEG") == 0) {
@@ -184,14 +233,16 @@ void handleJSON() {
       }
       // Set global sampling variable
       streamConfig.samplingRate = rate;
+
       calcChunkSize();
-      
-      docSend["sampling_rate"] = streamConfig.samplingRate;
+      docSend["measures"] = (uint8_t)streamConfig.measures;
       docSend["chunk_size"] = streamConfig.chunkSize;
+      docSend["sampling_rate"] = streamConfig.samplingRate;
       docSend["conn_type"] = typeC;
       docSend["measurement_bytes"] = streamConfig.measurementBytes;
       docSend["prefix"] = streamConfig.prefix;
       docSend["cmd"] = CMD_SAMPLE;
+      docSend["unit"] = streamConfig.unit;
 
       next_state = SampleState::SAMPLE;
 
@@ -217,8 +268,12 @@ void handleJSON() {
       }
       docSend["error"] = false;
       state = next_state;
-      // UDP packets are not allowed to exceed 1500 bytes, so keep size reasonable
-      startSampling();
+
+      if (latchMode) {
+        startLatchedSampling(false);
+      } else {
+        startSampling();
+      }
     } else {
       setBusyResponse();
       docSend["msg"] = response;
@@ -232,7 +287,9 @@ void handleJSON() {
     // State is reset in stopSampling
     stopSampling();
     // Write remaining chunks with tail
-    writeChunks(true);
+    outputWriter(true);
+    JsonObject obj = docSend.to<JsonObject>();
+    obj.clear();
     docSend["msg"] = F("Received stop command");
     docSend["sample_duration"] = samplingDuration;
     docSend["samples"] = totalSamples;
