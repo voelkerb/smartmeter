@@ -1101,7 +1101,7 @@ void timer_init() {
  ****************************************************/
 TaskHandle_t streamServerTaskHandle = NULL;
 void checkStreamServer(void * pvParameters) {
-  while (true) {
+  while (not updating) {
     if (strcmp(config.streamServer, NO_SERVER) != 0 and !exStreamServer.connected()) {
       exStreamServer.connect(config.streamServer, STANDARD_TCP_SAMPLE_PORT);
     }
