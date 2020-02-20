@@ -164,6 +164,22 @@ const int RAM_BUF_SIZE = 40*1024;
 #define CMD_STREAM_SERVER "streamServer"
 
 
+#define MEASURE_VI "v,i,v,i,v,i"
+#define MEASURE_VI_COMPATIBILITY "v,i"
+#define MEASURE_VI_L1 "v,i_L1"
+#define MEASURE_VI_L2 "v,i_L2"
+#define MEASURE_VI_L3 "v,i_L3"
+#define MEASURE_PQ "p,q"
+#define MEASURE_PQ_LONG "p,p,p,q,q,q"
+#define MEASURE_VI_RMS "v,i_RMS"
+#define MEASURE_VI_RMS_LONG "v,v,v,i,i,i_RMS"
+
+
+#define UNIT_VI "V,mA,V,mA,V,mA"
+#define UNIT_VI_LX "V,mA"
+#define UNIT_PQ "W,W,W,VAR,VAR,VAR"
+#define UNIT_VI_RMS "V,V,V,mA,mA,mA"
+
 #include <ETH.h>
 #define ETH_CLK_MODE    ETH_CLOCK_GPIO0_IN//ETH_CLOCK_GPIO17_OUT//ETH_CLOCK_GPIO0_IN//ETH_CLOCK_GPIO17_OUT
 // Pin# of the enable signal for the external crystal oscillator (-1 to disable for internal APLL source)

@@ -1,30 +1,30 @@
 /****************************************************
  * A request happended, handle it
  ****************************************************/
-void handleEvent(Stream &getter) {
-  if (!getter.available()) return;
-  getter.readStringUntil('\n').toCharArray(command,COMMAND_MAX_SIZE);
+void handleEvent(Stream * getter) {
+  if (!getter->available()) return;
+  getter->readStringUntil('\n').toCharArray(command,COMMAND_MAX_SIZE);
   // Be backwards compatible to "?" command all the time
   if (command[0] == '?') {
-    getter.println(F("Info:Setup done"));
+    getter->println(F("Info:Setup done"));
     return;
   }
   #ifdef DEBUG_DEEP
   logger.log(INFO, command);
   #endif
 
-  newGetter = (Stream*)&getter;
+  newGetter = getter;
 
   response = "";
   if (!parseCommand()) return;
   handleJSON();
 
   if (docSend.isNull() == false) {
-    getter.flush();
+    getter->flush();
     response = "";
     serializeJson(docSend, response);
-    response = "Info:" + response;
-    getter.println(response);
+    response = LOG_PREFIX + response;
+    getter->println(response);
     // This will be too long for the logger
     logger.log(response.c_str());
   }
@@ -109,28 +109,25 @@ void handleJSON() {
  
       streamConfig.measurementBytes = 8;
       bool latchMode = false;
-      sprintf(streamConfig.unit, "mA,V");
 
-      if (measuresC == nullptr) {
+      if (measuresC == nullptr or strcmp(measuresC, MEASURE_VI) == 0) {
         streamConfig.measures = Measures::VI;
         streamConfig.measurementBytes = 24;
-        sprintf(streamConfig.unit, "mA,V,mA,V,mA,V");
-      } else if (strcmp(measuresC, "v,i_L1") == 0 or strcmp(measuresC, "v,i") == 0) {
+      } else if (strcmp(measuresC, MEASURE_VI_L1) == 0 
+                 or strcmp(measuresC, MEASURE_VI_COMPATIBILITY) == 0) {
         streamConfig.measures = Measures::VI_L1;
-      } else if (strcmp(measuresC, "v,i_L2") == 0) {
+      } else if (strcmp(measuresC, MEASURE_VI_L2) == 0) {
         streamConfig.measures = Measures::VI_L2;
-      } else if (strcmp(measuresC, "v,i_L3") == 0) {
+      } else if (strcmp(measuresC, MEASURE_VI_L3) == 0) {
         streamConfig.measures = Measures::VI_L3;
-      } else if (strcmp(measuresC, "p,q") == 0) {
+      } else if (strcmp(measuresC, MEASURE_PQ) == 0) {
         streamConfig.measures = Measures::PQ;
         streamConfig.measurementBytes = 24;
-        sprintf(streamConfig.unit, "W,W,W,VAR,VAR,VAR");
         // PQ only possible in latchMode
         latchMode = true;
-      } else if (strcmp(measuresC, "v,i_RMS") == 0) {
+      } else if (strcmp(measuresC, MEASURE_VI_RMS) == 0) {
         streamConfig.measures = Measures::VI_RMS;
         streamConfig.measurementBytes = 24;
-        sprintf(streamConfig.unit, "V,V,V,mA,mA,mA");
         // RMS only possible in latchMode
         latchMode = true;
       } else {
@@ -141,12 +138,12 @@ void handleJSON() {
       }
       streamConfig.numValues = streamConfig.measurementBytes/sizeof(float);
       
-      // Only important for MQTT sampling
-      JsonObject obj = docSample.to<JsonObject>();
-      obj.clear();
-      docSample["unit"] = streamConfig.unit;
-      JsonArray array = docSample["values"].to<JsonArray>();
-      for (int i = 0; i < streamConfig.numValues; i++) array.add(0.0f);
+      // Only important for MQTT sampling_rate
+      // Moved away due to som earduinojson bug
+      // objSample.clear();
+      // objSample["unit"] = unitToStr(streamConfig.measures);
+      // JsonArray array = objSample["values"].to<JsonArray>();
+      // for (int i = 0; i < streamConfig.numValues; i++) array.add(0.0f);
 
       if (not latchMode) {
         // We can only do these rates
@@ -235,14 +232,15 @@ void handleJSON() {
       streamConfig.samplingRate = rate;
 
       calcChunkSize();
-      docSend["measures"] = (uint8_t)streamConfig.measures;
-      docSend["chunk_size"] = streamConfig.chunkSize;
-      docSend["sampling_rate"] = streamConfig.samplingRate;
+
+      docSend["measures"] = measuresToStr(streamConfig.measures);
+      docSend["chunksize"] = streamConfig.chunkSize;
+      docSend["samplingrate"] = streamConfig.samplingRate;
       docSend["conn_type"] = typeC;
       docSend["measurements"] = streamConfig.numValues;
       docSend["prefix"] = streamConfig.prefix;
       docSend["cmd"] = CMD_SAMPLE;
-      docSend["unit"] = streamConfig.unit;
+      docSend["unit"] = unitToStr(streamConfig.measures);
 
       next_state = SampleState::SAMPLE;
 
@@ -284,6 +282,7 @@ void handleJSON() {
   /*********************** STOP COMMAND ****************************/
   // e.g. {"cmd":"stop"}
   else if (strcmp(cmd, CMD_STOP) == 0) {
+    if (state == SampleState::IDLE) return;
     // State is reset in stopSampling
     stopSampling();
     // Write remaining chunks with tail

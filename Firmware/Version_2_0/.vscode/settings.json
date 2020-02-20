@@ -42,6 +42,7 @@
         "system_error": "cpp",
         "tuple": "cpp",
         "type_traits": "cpp",
-        "typeinfo": "cpp"
+        "typeinfo": "cpp",
+        "__tuple": "cpp"
     }
 }
