@@ -19,7 +19,8 @@ void handleEvent(Stream * getter) {
   if (!parseCommand()) return;
   handleJSON();
 
-  if (docSend.isNull() == false) {
+  JsonObject object = docSend.as<JsonObject>();
+  if (object.size()) {
     getter->flush();
     response = "";
     serializeJson(docSend, response);
@@ -325,6 +326,7 @@ void handleJSON() {
     docSend["name"] = config.name;
     docSend["ip"] = Network::localIP().toString();
     docSend["mqtt_server"] = config.mqttServer;
+    docSend["time_server"] = config.timeServer;
     docSend["sampling_rate"] = streamConfig.samplingRate;
     docSend["buffer_size"] = ringBuffer.getSize();
     docSend["psram"] = ringBuffer.inPSRAM();
@@ -434,6 +436,39 @@ void handleJSON() {
       docSend["stream_server"] = address;
       docSend["error"] = false;
       initStreamServer();
+    } else {
+      setBusyResponse();
+      docSend["msg"] = response;
+      docSend["state"] = "busy";
+    }
+  }
+  /*********************** Time Server COMMAND ****************************/
+  // e.g. {"cmd":"streamServer", "payload":{"server":"<ServerAddress>"}}
+  else if (strcmp(cmd, CMD_TIME_SERVER) == 0) {
+    if (state == SampleState::IDLE) {
+      docSend["error"] = true;
+      const char* newServer = docRcv["payload"]["server"];
+      if (newServer == nullptr) {
+        docSend["msg"] = F("StreamServer address required in payload with key server");
+        return;
+      }
+      if (strlen(newServer) < MAX_DNS_LEN) {
+        config.setTimeServerAddress((char * )newServer);
+      } else {
+        response = F("TimeServer address too long, only string of size ");
+        response += MAX_DNS_LEN;
+        response += F(" allowed");
+        docSend["msg"] = response;
+        return;
+      }
+      char * address = config.timeServer;
+      response = F("Set TimeServer address to: ");
+      response += address;
+      //docSend["msg"] = sprintf( %s", name);
+      docSend["msg"] = response;
+      docSend["time_server"] = address;
+      docSend["error"] = false;
+      myTime.updateNTPTime(true);
     } else {
       setBusyResponse();
       docSend["msg"] = response;
@@ -608,8 +643,8 @@ void mqttCallback(char* topic, byte* message, unsigned int length) {
     // message was already copied to command array
     parseCommand();
     handleJSON();
-
-    if (docSend.isNull() == false) {
+    JsonObject object = docSend.as<JsonObject>();
+    if (object.size()) {
       response = "";
       serializeJson(docSend, response);
       // This might be too long for the logger

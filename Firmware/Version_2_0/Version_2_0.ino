@@ -40,7 +40,7 @@ MultiLogger& logger = MultiLogger::getInstance();
 Configuration config;
 
 Rtc rtc(RTC_INT, SDA, SCL);
-TimeHandler myTime(ntpServerName, LOCATION_TIME_OFFSET, &rtc);
+TimeHandler myTime(config.timeServer, LOCATION_TIME_OFFSET, &rtc);
 
 // ADE900 Object
 ADE9000 ade9k(ADE_RESET_PIN, ADE_DREADY_PIN, ADE_PM1_PIN, ADE_SPI_BUS);

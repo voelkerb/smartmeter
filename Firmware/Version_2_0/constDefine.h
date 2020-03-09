@@ -31,8 +31,6 @@
 
 const char * LOG_FILE = "/log.txt";
 
-const char* ntpServerName = "time.uni-freiburg.de";//"0.de.pool.ntp.org";
-
 const char LOG_PREFIX_SERIAL[] = "Info:";
 const char LOG_PREFIX[] = "Info:";
 
@@ -162,6 +160,7 @@ const int RAM_BUF_SIZE = 40*1024;
 #define CMD_GET_LOG "getLog"
 #define CMD_MQTT_SERVER "mqttServer"
 #define CMD_STREAM_SERVER "streamServer"
+#define CMD_TIME_SERVER "timeServer"
 
 
 #define MEASURE_VI "v,i,v,i,v,i"
