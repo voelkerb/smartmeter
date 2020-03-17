@@ -312,6 +312,7 @@ void handleJSON() {
   // e.g. {"cmd":"factoryReset"}
   else if (strcmp(cmd, CMD_RESET) == 0) {
     config.makeDefault();
+    config.store();
     ESP.restart();
   }
 

@@ -142,6 +142,7 @@ long lifenessUpdate = millis();
 long mdnsUpdate = millis();
 long tcpUpdate = millis();
 long rtcUpdate = millis();
+long mqttUpdate = millis();
 
 // Current CPU speed
 unsigned int coreFreq = 0;
@@ -386,6 +387,15 @@ void onIdle() {
     logger.log("");
   }
 
+  // Update stuff over mqtt
+  if (mqtt.connected) {
+    if ((long)(millis() - mqttUpdate) >= 0) {
+      mqttUpdate += MQTT_UPDATE_INTERVAL;
+      // On long time no update, avoid multiupdate
+      if ((long)(millis() - mqttUpdate) >= 0) mqttUpdate = millis() + MQTT_UPDATE_INTERVAL; 
+      sendStatusMQTT();
+    }
+  }
   
   // Look if external stream server is connected
   if (exStreamServer.connected()) {
@@ -410,6 +420,43 @@ void onIdle() {
       startSampling();
     }
   }
+}
+
+/****************************************************
+ * Send Status info over mqtt 
+ ****************************************************/
+void sendStatusMQTT() {
+  JsonObject obj = docSend.to<JsonObject>();
+  obj.clear();
+
+  float value = 0.0;
+
+  float data[4] = { 0.0 };
+
+  
+  ade9k.readActivePower(&data[0]);
+  value = data[0]+data[1]+data[2];
+  docSend["power"] = round2<float>(value);
+
+  // We want current in A
+  ade9k.readCurrentRMS(&data[0]);
+  value = data[0]+data[1]+data[2]+data[3];
+  docSend["current"] = round2<float>(value/1000.0);
+
+  // unit is watt hours and we want kwj
+  ade9k.readActiveEnergy(&data[0], &logger);
+  docSend["energy"] = value;
+
+  // use avg voltage here
+  ade9k.readVoltageRMS(&data[0]);
+  value = (data[0]+data[1]+data[2])/3.0;
+  docSend["volt"] = round2<float>(value);
+  
+  docSend["ts"] = myTime.timestampString(true);
+  response = "";
+  serializeJson(docSend, response);
+  logger.log("MQTT msg: %s", response.c_str());
+  mqtt.publish(mqttTopicPubSample, response.c_str());
 }
 
 /****************************************************

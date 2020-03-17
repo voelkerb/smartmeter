@@ -43,6 +43,9 @@
         "tuple": "cpp",
         "type_traits": "cpp",
         "typeinfo": "cpp",
-        "__tuple": "cpp"
-    }
+        "__tuple": "cpp",
+        "istream": "cpp",
+        "ostream": "cpp"
+    },
+    "C_Cpp.errorSquiggles": "Disabled"
 }
