@@ -45,7 +45,11 @@
         "typeinfo": "cpp",
         "__tuple": "cpp",
         "istream": "cpp",
-        "ostream": "cpp"
+        "ostream": "cpp",
+        "thread": "cpp",
+        "*.tcc": "cpp",
+        "__config": "cpp",
+        "__nullptr": "cpp"
     },
     "C_Cpp.errorSquiggles": "Disabled"
 }

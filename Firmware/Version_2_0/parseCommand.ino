@@ -9,6 +9,10 @@ void handleEvent(Stream * getter) {
     getter->println(F("Info:Setup done"));
     return;
   }
+  // This is just a keepalive msg
+  if (command[0] == '!') {
+    return;
+  }
   #ifdef DEBUG_DEEP
   logger.log(INFO, command);
   #endif
@@ -16,18 +20,23 @@ void handleEvent(Stream * getter) {
   newGetter = getter;
 
   response = "";
-  if (!parseCommand()) return;
-  handleJSON();
+  if (parseCommand()) {
+    handleJSON();
 
-  JsonObject object = docSend.as<JsonObject>();
-  if (object.size()) {
-    getter->flush();
-    response = "";
-    serializeJson(docSend, response);
-    response = LOG_PREFIX + response;
-    getter->println(response);
-    // This will be too long for the logger
-    logger.log(response.c_str());
+    JsonObject object = docSend.as<JsonObject>();
+    if (object.size()) {
+      
+      // NOTE: This flush causes socket broke pipe... WTF
+      // getter->flush();
+      response = "";
+      serializeJson(docSend, response);
+      response = LOG_PREFIX + response;
+      getter->println(response.c_str());
+
+      if ((Stream*)&Serial != getter) {
+        serialLog.log(response.c_str());
+      }
+    }
   }
   response = "";
   command[0] = '\0';
@@ -44,11 +53,11 @@ bool parseCommand() {
   if (error) {
     // Remove all unallowed json characters to prevent error 
     uint32_t len = strlen(command);
-    if (len > 10) len = 10;
+    if (len > 30) len = 30;
     for (size_t i = 0; i < len; i++) {
       if (command[i] == '\r' || command[i] == '\n' || command[i] == '"' || command[i] == '}' || command[i] == '{') command[i] = '_';
     }
-    logger.log(ERROR, "deserializeJson() failed: %.10s", &command[0]);
+    logger.log(ERROR, "deserializeJson() failed: %.30s", &command[0]);
     return false;
   }
   //docSend.clear();
@@ -98,6 +107,9 @@ void handleJSON() {
       unsigned long ts = docRcv["payload"]["time"].as<unsigned long>();
       bool prefix = docRcv["payload"]["prefix"].as<bool>();
       JsonVariant prefixVariant = root["payload"]["prefix"];
+      bool flowControl = docRcv["payload"]["flowCtr"].as<bool>();
+      JsonVariant flowControlVariant = root["payload"]["flowCtr"];
+      JsonVariant slotVariant = root["payload"]["slot"];
 
       docSend["error"] = true;
       if (typeC == nullptr or rate == 0) {
@@ -107,6 +119,9 @@ void handleJSON() {
         docSend["msg"] = response;
         return;
       }
+
+      // Its a valid command, begin from standard config.
+      standardConfig();
  
       streamConfig.measurementBytes = 8;
       bool latchMode = false;
@@ -170,7 +185,6 @@ void handleJSON() {
         }
       }
 
-      streamConfig.prefix = true;
       // If we do not want a prefix, we have to disable this if not at extra port
       if (!prefixVariant.isNull()) {
         streamConfig.prefix = prefix;
@@ -187,7 +201,6 @@ void handleJSON() {
       } else if (strcmp(typeC, "TCP") == 0) {
         sendClient = (WiFiClient*)newGetter;
         sendStream = sendClient; 
-        // sendClient = &client[0]; 
         streamConfig.stream = StreamType::TCP;
         streamConfig.port = STANDARD_TCP_SAMPLE_PORT;
         streamConfig.ip = sendClient->remoteIP();
@@ -229,9 +242,28 @@ void handleJSON() {
         docSend["msg"] = response;
         return;
       }
+
+      if (!flowControlVariant.isNull()) {
+        streamConfig.flowControl = flowControl;
+        if (not flowControl) rts = true;
+        else rts = false;
+        // outputWriter = NULL;
+      }
+
+      if (!slotVariant.isNull()) {
+        JsonArray slot = root["payload"]["slot"].as<JsonArray>();
+        int slotTime = slot[0].as<int>();
+        int slots = slot[1].as<int>();
+        streamConfig.slots = slots;
+        streamConfig.slot = slotTime;
+        docSend["slot"] = slot;
+        // outputWriter = NULL;
+        rts = false;
+      }
+
       // Set global sampling variable
       streamConfig.samplingRate = rate;
-
+       
       calcChunkSize();
 
       docSend["measures"] = measuresToStr(streamConfig.measures);
@@ -240,6 +272,7 @@ void handleJSON() {
       docSend["conn_type"] = typeC;
       docSend["measurements"] = streamConfig.numValues;
       docSend["prefix"] = streamConfig.prefix;
+      docSend["flowCtr"] = streamConfig.flowControl;
       docSend["cmd"] = CMD_SAMPLE;
       docSend["unit"] = unitToStr(streamConfig.measures);
 
@@ -264,6 +297,10 @@ void handleJSON() {
           response += F("//nStart sampling in: "); response += delta; response += F("ms");
           streamConfig.countdown = nowMs + delta;
           docSend["error"] = false;
+          Timestamp timestamp;
+          timestamp.seconds = ts;
+          timestamp.milliSeconds = 0;
+          docSend["startTs"] = myTime.timestampStr(timestamp);
         }
         docSend["msg"] = String(response);
         return;
@@ -276,6 +313,7 @@ void handleJSON() {
       } else {
         startSampling();
       }
+      docSend["startTs"] = myTime.timestampStr(streamConfig.startTs);
     } else {
       setBusyResponse();
       docSend["msg"] = response;
@@ -283,6 +321,46 @@ void handleJSON() {
     }
   }
 
+  /*********************** FlowControl COMMAND ****************************/
+  // e.g. {"cmd":"stop"}
+  else if (strcmp(cmd, CMD_FLOW) == 0) {
+    JsonVariant valueVariant = root["value"];
+    if (valueVariant.isNull()) {
+      docSend["error"] = false;
+      docSend["msg"] = F("Info:Not a valid \"cts\" command");
+      return;
+    }
+    rts = docRcv["value"].as<bool>();
+  }
+  /*********************** Request X samples COMMAND *********************/
+  else if (strcmp(cmd, CMD_REQ_SAMPLES) == 0) {
+    if (state == SampleState::SAMPLE) {
+      rts = true;
+      long samples = docRcv["samples"].as<long>();
+      if (samples <= 10 ||samples > 2000) {
+        response += F("stay between 10 and 100000 samples, not "); response += samples;
+        docSend["msg"] = response;
+        return;
+      }
+      long chunk = samples*streamConfig.measurementBytes;
+      // We don't want to send anything
+      JsonObject obj = docSend.to<JsonObject>();
+      obj.clear();
+      if (ringBuffer.available() < samples) {
+        return;
+      }
+      Serial.println("Sending... ");
+      Serial.printf("%u(avail), %u(chunk)\n", ringBuffer.available(), chunk);
+      long start = millis();
+      // Send the chunk of data
+      if (streamConfig.stream == StreamType::TCP){
+        writeData(*sendStream, chunk);
+      } else if (streamConfig.stream == StreamType::UDP){
+        writeData(udpClient, chunk);
+      }
+      Serial.printf("Took %ums\n", millis()-start);
+    }
+  }
   /*********************** STOP COMMAND ****************************/
   // e.g. {"cmd":"stop"}
   else if (strcmp(cmd, CMD_STOP) == 0) {
@@ -297,9 +375,59 @@ void handleJSON() {
     docSend["sample_duration"] = samplingDuration;
     docSend["samples"] = totalSamples;
     docSend["sent_samples"] = sentSamples;
+    docSend["start_ts"] = myTime.timestampStr(streamConfig.startTs);
+    docSend["stop_ts"] = myTime.timestampStr(streamConfig.stopTs);
     docSend["ip"] = Network::localIP().toString();
     docSend["avg_rate"] = totalSamples/(samplingDuration/1000.0);
     docSend["cmd"] = CMD_STOP;
+  }
+
+  /*********************** LOG LEVEL COMMAND ****************************/
+  else if (strcmp(cmd, CMD_LOG_LEVEL) == 0) {
+    docSend["error"] = true;
+    const char* level = root["level"];
+    LogType newLogType = LogType::DEBUG;
+    if (level == nullptr) {
+      docSend["msg"] = "Not a valid Log level cmd, level missing";
+      return;
+    }
+    if (strcmp(level, LOG_LEVEL_ALL) == 0) {
+      newLogType = LogType::ALL;
+    } else if (strcmp(level, LOG_LEVEL_DEBUG) == 0) {
+      newLogType = LogType::DEBUG;
+    } else if (strcmp(level, LOG_LEVEL_INFO) == 0) {
+      newLogType = LogType::INFO;
+    } else if (strcmp(level, LOG_LEVEL_WARNING) == 0) {
+      newLogType = LogType::WARNING;
+    } else if (strcmp(level, LOG_LEVEL_ERROR) == 0) {
+      newLogType = LogType::ERROR;
+    } else {
+      response = "Unknown log level: ";
+      response += level;
+      docSend["msg"] = response;
+      return;
+    }
+    int found = -2;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+      if (newGetter == (Stream*)&client[i]) {
+        found = i;
+        streamLog[i]->_type = newLogType;
+        streamLog[i]->setLogType(newLogType);
+      }
+    }
+    if (newGetter == (Stream*)&Serial) {
+      found = -1;
+      serialLog._type = newLogType;
+      serialLog.setLogType(newLogType);
+    }
+    if (found <= -2) {
+      docSend["msg"] = "getter not related to logger";
+      return;
+    }
+    response = "Log Level set to: ";
+    response += level;
+    docSend["msg"] = response;
+    docSend["error"] = false;
   }
 
   /*********************** RESTART COMMAND ****************************/
@@ -308,10 +436,18 @@ void handleJSON() {
     ESP.restart();
   }
 
-  /*********************** RESTART COMMAND ****************************/
+  /*********************** factoryReset COMMAND ****************************/
   // e.g. {"cmd":"factoryReset"}
-  else if (strcmp(cmd, CMD_RESET) == 0) {
+  else if (strcmp(cmd, CMD_FACTORY_RESET) == 0) {
     config.makeDefault();
+    config.store();
+    ESP.restart();
+  }
+
+  /*********************** basicReset COMMAND ****************************/
+  // e.g. {"cmd":"basicReset"}
+  else if (strcmp(cmd, CMD_BASIC_RESET) == 0) {
+    config.makeDefault(false);// Do not reset name
     config.store();
     ESP.restart();
   }
@@ -319,30 +455,10 @@ void handleJSON() {
   /*********************** INFO COMMAND ****************************/
   // e.g. {"cmd":"info"}
   else if (strcmp(cmd, CMD_INFO) == 0) {
-    docSend["cmd"] = "info";
-    docSend["type"] = F("smartmeter");
-    docSend["version"] = VERSION;
-    String compiled = __DATE__;
-    compiled += " ";
-    compiled += __TIME__;
-    docSend["compiled"] = compiled;
-    docSend["sys_time"] = myTime.timeStr();
-    docSend["name"] = config.name;
-    docSend["ip"] = Network::localIP().toString();
-    docSend["mqtt_server"] = config.mqttServer;
-    docSend["time_server"] = config.timeServer;
-    docSend["sampling_rate"] = streamConfig.samplingRate;
-    docSend["buffer_size"] = ringBuffer.getSize();
-    docSend["psram"] = ringBuffer.inPSRAM();
-    docSend["rtc"] = rtc.connected;
-    docSend["state"] = state != SampleState::IDLE ? "busy" : "idle";
-    String ssids = "[";
-    for (int i = 0; i < config.numAPs; i++) {
-      ssids += config.wifiSSIDs[i];
-      if (i < config.numAPs-1) ssids += ", ";
-    }
-    ssids += "]";
-    docSend["ssids"] = ssids;
+    sendDeviceInfo(newGetter);
+    // It is already sent, prevent sending again
+    JsonObject obj = docSend.to<JsonObject>();
+    obj.clear();
   }
 
   /*********************** MDNS COMMAND ****************************/
@@ -404,6 +520,7 @@ void handleJSON() {
       docSend["msg"] = response;
       docSend["mqtt_server"] = address;
       docSend["error"] = false;
+      mqtt.disconnect();
       mqtt.init(config.mqttServer, config.name);
       mqtt.connect();
 

@@ -10,6 +10,11 @@
 
 #define VERSION "2.0"
 
+#define SEND_INFO_ON_CLIENT_CONNECT
+
+// Only allow cmds over serial if we are not sampling over tcp
+// #define CMD_OVER_SERIAL_WHILE_TCP_SAMPLING
+
 // Default values
 #define STANDARD_UDP_PORT 54323
 #define STANDARD_TCP_SAMPLE_PORT 54321
@@ -149,9 +154,12 @@ const int RAM_BUF_SIZE = 40*1024;
 
 // Communication commands
 #define CMD_SAMPLE "sample"
+#define CMD_REQ_SAMPLES "reqSamples"
+#define CMD_FLOW "cts"
 #define CMD_STOP "stop"
 #define CMD_RESTART "restart"
-#define CMD_RESET "factoryReset"
+#define CMD_FACTORY_RESET "factoryReset"
+#define CMD_BASIC_RESET "basicReset"
 #define CMD_INFO "info"
 #define CMD_MDNS "mdns"
 #define CMD_NTP "ntp"
@@ -162,7 +170,16 @@ const int RAM_BUF_SIZE = 40*1024;
 #define CMD_MQTT_SERVER "mqttServer"
 #define CMD_STREAM_SERVER "streamServer"
 #define CMD_TIME_SERVER "timeServer"
+#define CMD_LOG_LEVEL "log"
 
+#define LOG_LEVEL_ALL "all"
+#define LOG_LEVEL_DEBUG "debug"
+#define LOG_LEVEL_INFO "info"
+#define LOG_LEVEL_WARNING "warning"
+#define LOG_LEVEL_ERROR "error"
+
+#define MAX_UNIT_STR_LENGTH 20
+#define MAX_MEASURE_STR_LENGTH 20
 
 #define MEASURE_VI "v,i,v,i,v,i"
 #define MEASURE_VI_COMPATIBILITY "v,i"
@@ -208,6 +225,8 @@ const int RAM_BUF_SIZE = 40*1024;
 #define MQTT_TOPIC_STATE "state"
 #define MQTT_TOPIC_CMD "cmd"
 #define MQTT_TOPIC_INFO "info"
+
+#define MAX_MQTT_TOPIC_LEN MAX_MQTT_PUB_TOPIC_SWITCH+MAX_NAME_LEN
 
 const int MAX_MQTT_PUB_TOPIC_SWITCH = sizeof(MQTT_TOPIC_BASE) + sizeof(MQTT_TOPIC_STATE) + sizeof(MQTT_TOPIC_SWITCH) + 4*sizeof(MQTT_TOPIC_SEPARATOR) + 2;
 const int MAX_MQTT_PUB_TOPIC_SAMPLE = sizeof(MQTT_TOPIC_BASE) + sizeof(MQTT_TOPIC_STATE) + sizeof(MQTT_TOPIC_SAMPLE) + 4*sizeof(MQTT_TOPIC_SEPARATOR) + 2;
