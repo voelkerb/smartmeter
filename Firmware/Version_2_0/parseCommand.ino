@@ -699,7 +699,12 @@ void handleJSON() {
   /*********************** NTP COMMAND ****************************/
   // e.g. {"cmd":"ntp"}
   else if (strcmp(cmd, CMD_NTP) == 0) {
-    if (myTime.updateNTPTime(true)) {
+     bool bg = false;
+    JsonVariant bgVariant = root["payload"]["bg"];
+    if (!bgVariant.isNull()) {
+      bg = docRcv["payload"]["bg"].as<bool>();
+    }
+    if (myTime.updateNTPTime(not bg)) {
       docSend["msg"] = "Time synced";
       docSend["error"] = false;
     } else {
