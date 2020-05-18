@@ -96,6 +96,8 @@ struct StreamConfig {
 };
 bool rts; // ready to send
 
+int correctSamples = 0;
+
 char measureStr[MAX_MEASURE_STR_LENGTH] = {'\0'};
 char unitStr[MAX_UNIT_STR_LENGTH] = {'\0'};
 
@@ -164,6 +166,8 @@ char criticalMsg[MAX_MQTT_PUB_TOPIC_INFO] = {'\0'};
 long testMillis = 0;
 long testMillis2 = 0;
 uint16_t testSamples = 0;
+
+portMUX_TYPE correctionMux = portMUX_INITIALIZER_UNLOCKED;
 
 // Mutex for 1s RTC Interrupt
 portMUX_TYPE sqwMux = portMUX_INITIALIZER_UNLOCKED;
@@ -983,11 +987,9 @@ void sample_timer_task( void * parameter) {
 
     if(xStatus == pdPASS) {
 
-      ade9k.readRawMeasurement(&adc);
-      ade9k.convertRawMeasurement(&adc, &data[0]);
 
       counter++;
-      totalSamples++;
+
       if (counter >= streamConfig.samplingRate) {
         freqCalcNow = micros();
         freq = freqCalcNow-freqCalcStart;
@@ -1004,10 +1006,38 @@ void sample_timer_task( void * parameter) {
         }
       }
 
-      bool success = ringBuffer.write((uint8_t*)&(data[offset]), streamConfig.measurementBytes);
-      if (!success) {
-        logger.log(ERROR, "Overflow during ringBuffer write");
-        ringBuffer.reset();
+      int samplesToTake = 1;
+      // If we are in the middle of a second sqwv
+      if (totalSamples % streamConfig.samplingRate == 1) {
+        // samplesCorrect > 0 means we have too less samples
+        // samplesCorrect < 0 means we have too much samples
+        // If we have to coorect samples upwards
+        if (correctSamples > 0) {
+          samplesToTake++;
+          portENTER_CRITICAL_ISR(&correctionMux);
+          correctSamples--;
+          portEXIT_CRITICAL_ISR(&correctionMux);
+        } else if (correctSamples < 0) {
+          samplesToTake--;
+          portENTER_CRITICAL_ISR(&correctionMux);
+          correctSamples++;
+          portEXIT_CRITICAL_ISR(&correctionMux);
+        }
+      }    
+      // No matter what, we need to remove the sample from the fifo     
+      ade9k.readRawMeasurement(&adc);
+      ade9k.convertRawMeasurement(&adc, &data[0]);
+
+      // With correction, this should normally be 1
+      for (int i = 0; i < samplesToTake; i++) {
+        totalSamples++;
+
+        bool success = ringBuffer.write((uint8_t*)&(data[offset]), streamConfig.measurementBytes);
+        if (!success) {
+          uint32_t lostSamples = ringBuffer.getSize()/streamConfig.measurementBytes;
+          logger.log(ERROR, "Overflow during ringBuffer write, lost %lu samples", lostSamples);
+          ESP.restart();
+        }
       }
 
     } else {
@@ -1056,7 +1086,6 @@ void IRAM_ATTR latched_sample_timer_task(void *param) {
     xSemaphoreTake(timer_sem, portMAX_DELAY);
     
     // Vaiables for frequency count
-    totalSamples++;
     if (counter >= streamConfig.samplingRate) {
       freqCalcNow = micros();
       freq = freqCalcNow-freqCalcStart;
@@ -1064,15 +1093,40 @@ void IRAM_ATTR latched_sample_timer_task(void *param) {
       if (rtc.connected) timerAlarmDisable(timer);
     }
 
-    if (streamConfig.measures == Measures::VI_RMS) {
-      ade9k.readVoltageRMS(&data[0]);
-      ade9k.readCurrentRMS(&data[3]);
-    } else if (streamConfig.measures == Measures::PQ) {
-      ade9k.readActivePower(&data[0]);
-      ade9k.readReactivePower(&data[3]);
-    }
-    if (!ringBuffer.write((uint8_t*)&data[0], streamConfig.measurementBytes)) {
-      logger.log(ERROR, "Cannot fill ringbuffer");
+    int samplesToTake = 1;
+    // If we are in the middle of a second sqwv
+    if (totalSamples % streamConfig.samplingRate == 1) {
+      // samplesCorrect > 0 means we have too less samples
+      // samplesCorrect < 0 means we have too much samples
+      // If we have to coorect samples upwards
+      if (correctSamples > 0) {
+        samplesToTake++;
+        portENTER_CRITICAL_ISR(&correctionMux);
+        correctSamples--;
+        portEXIT_CRITICAL_ISR(&correctionMux);
+      } else if (correctSamples < 0) {
+        samplesToTake--;
+        portENTER_CRITICAL_ISR(&correctionMux);
+        correctSamples++;
+        portEXIT_CRITICAL_ISR(&correctionMux);
+      }
+    } 
+    // With correction, this should normally be 1
+    for (int i = 0; i < samplesToTake; i++) {
+      totalSamples++;
+
+      if (streamConfig.measures == Measures::VI_RMS) {
+        ade9k.readVoltageRMS(&data[0]);
+        ade9k.readCurrentRMS(&data[3]);
+      } else if (streamConfig.measures == Measures::PQ) {
+        ade9k.readActivePower(&data[0]);
+        ade9k.readReactivePower(&data[3]);
+      }
+      if (!ringBuffer.write((uint8_t*)&data[0], streamConfig.measurementBytes)) {
+        uint32_t lostSamples = ringBuffer.getSize()/streamConfig.measurementBytes;
+        logger.log(ERROR, "Overflow during ringBuffer write, lost %lu samples", lostSamples);
+        ESP.restart();
+      }
     }
 
   }
@@ -1090,6 +1144,30 @@ TaskHandle_t Task1;
 void setupSqwvInterrupt() {
   // Enable 1Hz output of RTC
   rtc.enableRTCSqwv(1);
+  
+  // NOTE: Seems to work
+
+  // if (state == SampleState::SAMPLE_LATCHED) {
+  //   // Setup sqwv interrupt on core 0
+  //   xTaskCreatePinnedToCore(
+  //         setupSqwvInterruptC0,        
+  //         "setupSqwvInterruptC0",    
+  //         4000,      
+  //         NULL,
+  //         10, 
+  //         &Task1,
+  //         1); 
+  // } else {
+  //   // Setup sqwv interrupt on core 0
+  //   xTaskCreatePinnedToCore(
+  //         setupSqwvInterruptC0,        
+  //         "setupSqwvInterruptC0",    
+  //         4000,      
+  //         NULL,
+  //         10, 
+  //         &Task1,
+  //         0); 
+  // }
   // Setup sqwv interrupt on core 0
   xTaskCreatePinnedToCore(
         setupSqwvInterruptC0,        
@@ -1133,6 +1211,29 @@ void setupSqwvInterruptC0( void * parameter ) {
 TaskHandle_t Task2;
 void disableSqwvInterrupt() {
   // Interrupt must be deactivated from core it is activated
+
+  // NOTE: Seems to work (unneccessary?)
+
+  // if (state == SampleState::SAMPLE_LATCHED) {
+  //   xTaskCreatePinnedToCore(
+  //       disableSqwvInterruptC0,
+  //       "disableSqwvInterruptC0", 
+  //       4000,
+  //       NULL,
+  //       10,
+  //       &Task2,
+  //       1); 
+  // } else {
+  //   xTaskCreatePinnedToCore(
+  //       disableSqwvInterruptC0,
+  //       "disableSqwvInterruptC0", 
+  //       4000,
+  //       NULL,
+  //       10,
+  //       &Task2,
+  //       0); 
+  // }
+
   xTaskCreatePinnedToCore(
       disableSqwvInterruptC0,
       "disableSqwvInterruptC0", 
@@ -1304,7 +1405,7 @@ void calcChunkSize() {
  * the samplingrate currently set. Furthermore,
  * all buffer indices are reset to the default values.
  ****************************************************/
-inline void startSampling() {
+void startSampling() {
   // Reset all variables
   state = SampleState::SAMPLE;
   sampleCB();
@@ -1312,7 +1413,7 @@ inline void startSampling() {
         "sampleTask",       /* String with name of task. */
         4096*2,            /* Stack size in words. */
         NULL,             /* Parameter passed as input of the task */
-        20,                /* Priority of the task. */
+        32,                /* Priority of the task. */
         &xHandle,            /* Task handle. */
         1); // Same task as the loop
         //  Network::ethernet? 1 : 0); // On wifi use core 0 on ethernet core 1 since wifi requires core 0 to be mostly idle
@@ -1321,6 +1422,7 @@ inline void startSampling() {
   sentSamples = 0;
   totalSamples = 0;
   interruptSamples = 0;
+  correctSamples = 0;
   calcChunkSize();
   ringBuffer.reset();
   samplingDuration = 0;
@@ -1357,7 +1459,7 @@ void startLatchedSampling(bool waitVoltage) {
     "Consumer",       /* String with name of task. */
     4096,            /* Stack size in words. */
     NULL,             /* Parameter passed as input of the task */
-    10,                /* Priority of the task. */
+    32,                /* Priority of the task. */
     &xHandle,            /* Task handle. */
     1);
 
@@ -1366,6 +1468,7 @@ void startLatchedSampling(bool waitVoltage) {
   totalSamples = 0;
   sqwCounter = 0;
   sqwCounter2 = 0;
+  correctSamples = 0;
   TIMER_CYCLES_FAST = (1000000) / streamConfig.samplingRate; // Cycles between HW timer inerrupts
   calcChunkSize();
   ringBuffer.reset();
@@ -1560,24 +1663,51 @@ void sampleCB() {
   // Do not allow network changes on sampling
   Network::allowNetworkChange = state==SampleState::IDLE ? false : true;
 }
+
+/****************************************************
+ * Display sampling information to logger
+ ****************************************************/
 void onSamplingInfo() {
   if (state != SampleState::IDLE) {
-    Timestamp now = myTime.timestamp();
     unsigned long _totalSamples = totalSamples;
+    Timestamp now = myTime.timestamp();
     uint32_t durationMs = (now.seconds - streamConfig.startTs.seconds)*1000;
     durationMs += (int(now.milliSeconds) - int(streamConfig.startTs.milliSeconds));
     float avgRate = _totalSamples/(durationMs/1000.0);
     uint32_t _goalSamples = float(durationMs/1000.0)*streamConfig.samplingRate;
-    float secondsOff = float(int(_goalSamples - _totalSamples))/float(streamConfig.samplingRate);
-    logger.log(WARNING, "NTP Sync while sampling: avg rate %.3f Hz", avgRate);
-    logger.log(WARNING, "Should be: %lu, is %lu samples", _goalSamples, _totalSamples);
-    logger.log(WARNING, "Offset of %.3f s", secondsOff);
-    logger.log(WARNING, "SecondInterrupts %i",  sqwCounter2);
-    logger.log(WARNING, "SamplingDur %.3f",  float(durationMs/1000.0));
+    int samplesOff = int(_goalSamples - _totalSamples);
+    float secondsOff = float(samplesOff)/float(streamConfig.samplingRate);
+    logger.log(INFO, "After NTP Sync: avg rate %.3f Hz", avgRate);
+    LogType type = LogType::INFO;
+    if (abs(secondsOff) > 0.02) type = LogType::WARNING;
+    logger.log(type, "Should be: %lu, is %lu samples", _goalSamples, _totalSamples);
+    logger.log(type, "Offset of %.3f s, SecondInterrupts %i, SamplingDur %.3f", secondsOff, sqwCounter2, float(durationMs/1000.0));
     logger.log(INFO, "From %s", myTime.timestampStr(streamConfig.startTs));
     logger.log(INFO, "To %s",  myTime.timestampStr(now));
+
+    #ifdef NTP_CORRECT_SAMPLINGRATE
+    if (abs(secondsOff) >= CORRECT_SAMPLING_THRESHOLD) correctSampling(samplesOff);
+    #endif
   }
 }
+
+void correctSampling(int samplesToCorrect) {
+  int samplesCorrect = samplesToCorrect;
+  // Cap it so that signal will not be distored too much
+  if (samplesCorrect > MAX_CORRECT_SAMPLES) samplesCorrect = MAX_CORRECT_SAMPLES;
+  else if (samplesCorrect < -MAX_CORRECT_SAMPLES) samplesCorrect = -MAX_CORRECT_SAMPLES;
+  // samplesCorrect > 0 means we have too less samples
+  // samplesCorrect < 0 means we have too much samples
+  portENTER_CRITICAL(&correctionMux);
+  correctSamples += samplesCorrect;
+  portEXIT_CRITICAL(&correctionMux);
+  logger.log(WARNING, "Correcting: %i samples", samplesCorrect);
+}
+
+
+/****************************************************
+ * Callback when NTP syncs happened
+ ****************************************************/
 void ntpSynced() {
   logger.log(INFO, "NTP synced");
   if (state != SampleState::IDLE) onSamplingInfo();
@@ -1598,24 +1728,29 @@ void setupOTA() {
   // ArduinoOTA.setPasswordHash("21232f297a57a5a743894a0e4a801fc3");
 
   ArduinoOTA.onStart([]() {
-    Network::allowNetworkChange = false;
     updating = true;
+    Network::allowNetworkChange = false;
     logger.log("Start updating");
 
     if (state != SampleState::IDLE) {
       logger.log(WARNING, "Stop Sampling, Update Requested");
       stopSampling();
-      // Write remaining chunks with tailr
-      if (outputWriter != NULL) outputWriter(true);
-      docSend["msg"] = F("Received stop command");
-      docSend["sample_duration"] = samplingDuration;
-      docSend["samples"] = totalSamples;
-      docSend["sent_samples"] = sentSamples;
-      docSend["start_ts"] = myTime.timestampStr(streamConfig.startTs);
-      docSend["stop_ts"] = myTime.timestampStr(streamConfig.stopTs);
-      docSend["ip"] = WiFi.localIP().toString();
-      docSend["avg_rate"] = totalSamples/(samplingDuration/1000.0);
-      docSend["cmd"] = CMD_STOP;
+
+      // // Write remaining chunks with tailr
+      // if (outputWriter != NULL) outputWriter(true);
+      // docSend["msg"] = F("Received stop command");
+      // docSend["sample_duration"] = samplingDuration;
+      // docSend["samples"] = totalSamples;
+      // docSend["sent_samples"] = sentSamples;
+      // docSend["start_ts"] = myTime.timestampStr(streamConfig.startTs);
+      // docSend["stop_ts"] = myTime.timestampStr(streamConfig.stopTs);
+      // docSend["ip"] = WiFi.localIP().toString();
+      // docSend["avg_rate"] = totalSamples/(samplingDuration/1000.0);
+      // docSend["cmd"] = CMD_STOP;
+
+      // serializeJson(docSend, response);
+      // response = LOG_PREFIX + response;
+      // if (sendStream) sendStream->println(response);
     }
 
     // Disconnecting all connected clients

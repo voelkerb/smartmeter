@@ -15,6 +15,11 @@
 // Only allow cmds over serial if we are not sampling over tcp
 // #define CMD_OVER_SERIAL_WHILE_TCP_SAMPLING
 
+// Correction threshold in s
+#define NTP_CORRECT_SAMPLINGRATE
+#define CORRECT_SAMPLING_THRESHOLD 0.009 // This is more or less half a cycle
+#define MAX_CORRECT_SAMPLES 10
+
 // Default values
 #define STANDARD_UDP_PORT 54323
 #define STANDARD_TCP_SAMPLE_PORT 54321
