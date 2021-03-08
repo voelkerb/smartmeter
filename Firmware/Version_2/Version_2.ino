@@ -1713,8 +1713,8 @@ void correctSampling(int samplesToCorrect) {
 /****************************************************
  * Callback when NTP syncs happened
  ****************************************************/
-void ntpSynced() {
-  logger.log(INFO, "NTP synced");
+void ntpSynced(unsigned int confidence) {
+  logger.log(INFO, "NTP synced with conf: %u", confidence);
   if (state != SampleState::IDLE) onSamplingInfo();
 }
 
