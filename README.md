@@ -1,7 +1,7 @@
 # SmartMeter
 
 The SmartMeter is a WiFi and Ethernet equipped electricity meter that to be installed in a home's fuse box. 
-The development started with hardware [Version 1.0](/Schematic/Version_1). It consists of an ESP32 microcontroller and a dedicated electricity monitoring chip. As the main idea behind this project was to record voltage and current waveforms at higher frequencies, several drawbacks for this use case were fixed with Hardware [Version 2.0](/Schematic/Version_2). It features a the same Microcontroller but with 8MB internal storage for data buffering, an RTC for precise sampling and time keeping. a faster USB serial connection with up to 12Mbaud and an ethernet interface.
+The development started with hardware [Version 1.0](/Schematic/Version_1). It consists of an ESP32 microcontroller and a dedicated electricity monitoring chip. As the main idea behind this project was to record voltage and current waveforms at higher frequencies, several drawbacks for this use case were fixed with Hardware [Version 2.0](/Schematic/Version_2). It features the same Microcontroller but with 8MB internal storage for data buffering, an RTC for precise time keeping while sampling, a faster USB serial connection with up to 12Mbaud and a 100Mbit ethernet interface.
 
 If you are just interested in the consumption of a single appliance, see the [PowerMeter](https://github.com/voelkerb/powermeter) instead.
 
