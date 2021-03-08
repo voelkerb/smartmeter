@@ -16,14 +16,13 @@
 
 #include "constDefine.h"
 #include "enums.h"
+#include "src/multiLogger/src/multiLogger.h"
+#include "src/DS3231_RTC/src/DS3231_RTC.h"
 #include "src/ADE9000/ADE9000.h"
 #include "src/config/config.h"
-#include "src/ringbuffer/ringbuffer.h"
-#include "src/network/network.h"
-#include "src/rtc/rtc.h"
-#include "src/time/timeHandling.h"
-#include "src/logger/logger.h"
-#include "src/mqtt/mqtt.h"
+#include "src/network/src/network.h"
+#include "src/ringbuffer/src/ringbuffer.h"
+#include "src/mqtt/src/mqtt.h"
 
 void IRAM_ATTR isr_adc_ready();
 void IRAM_ATTR sqwvTriggered(void* instance);
