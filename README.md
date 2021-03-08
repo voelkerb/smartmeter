@@ -91,4 +91,4 @@ Please cite our publications if you compare to or use this system:
 * Völker, B.; Pfeifer, M.; Scholl, P.M.; Becker, B. A Framework to Generate and Label Datasets for Non-Intrusive Load Monitoring. Energies 2021, 14, 75. https://doi.org/10.3390/en14010075
 
 
-Kudos also go to Pascal Verboket & Valentin Czisch for developing the first draft schematics prior to [Version 1.0](/Schematic/Version_1).
+Kudos also go to Gregor Richter for developing the first draft schematics prior to [Version 1.0](/Schematic/Version_1).
