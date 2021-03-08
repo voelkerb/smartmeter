@@ -16,7 +16,7 @@
 
 ## Upload using USB interface
 
-* Connect the [smartmeter] to USB
+* Connect the [smartmeter] (SampleBoard) to USB
 * Select no more than 2Mbauds
 * Press _Compile and Upload_
 
