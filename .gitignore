@@ -15,3 +15,7 @@
 **/*.s#*
 
 
+Firmware/Analog Devices API/
+Firmware/Analog Devices API/*
+
+

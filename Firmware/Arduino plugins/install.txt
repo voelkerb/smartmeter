@@ -1,7 +1,0 @@
-Copy boards.txt platform.txt to Arduino15 subfolder in the following directory
-test.sh must be in the tools subfolder.
-
-You can also append the last lines of these files to the existing files (PowerMeter32 and SmartMeter32)
-
-
-macOS: ~/Library/Arduino15/packages/esp32/hardware/esp32/<version>/

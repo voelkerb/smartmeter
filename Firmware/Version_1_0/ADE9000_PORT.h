@@ -11,7 +11,7 @@
 #define PM0_PIN       22
 #define PM1_PIN       21
 
-#define N_RESET_PIN   16
+#define N_RESET_PIN   2
 
 // Interrupt Request Output. This pins are active low logic output.
 #define N_IRQ0_PIN    32
@@ -23,7 +23,7 @@
 #define CF3_PIN       26
 
 // Event Pin/Data Ready
-#define CF4_PIN       27
+#define CF4_PIN       34
 #define N_EBENT_PIN   CF4_PIN
 #define DREADY_PIN    CF4_PIN
 

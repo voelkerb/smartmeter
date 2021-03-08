@@ -126,7 +126,13 @@ void ADE9000::begin(int8_t sck, int8_t miso, int8_t mosi, int8_t ss) {
   _spi->setDataMode(SPI_MODE0);
   _spi->setFrequency(20000000);
 
-  _spi->begin(sck, miso, mosi, ss);
+// TODO: Does this work?
+// #define ADE_SCK IO12
+// #define ADE_MISO IO13
+// #define ADE_CS IO14
+// #define ADE_MOSI IO15
+  _spi->begin(12, 13, 15, 14);
+  // _spi->begin(sck, miso, mosi, ss);
   _spi->setHwCs(true);
 
   // Wäre schön, wenn die delay auch in die richtige Richtung gehen würden
@@ -135,13 +141,14 @@ void ADE9000::begin(int8_t sck, int8_t miso, int8_t mosi, int8_t ss) {
   //_spi->bus()->ctrl2.miso_delay_num = 0;
   //_spi->bus()->dev->ctrl2.miso_delay_num  = 0b1000;
   //_spi->bus()->dev->ctrl2.miso_delay_mode = 3;
- 
+  
+  /*
   // FIXME leider ist die Variablen _ss usw von der SPIClass private...
   if (sck == -1 && miso == -1 && mosi == -1 && ss == -1) {
     _ss = (_spi_num == VSPI) ? SS : 15;
   } else {
     _ss = ss;
-  }
+  }*/
 
 }
 

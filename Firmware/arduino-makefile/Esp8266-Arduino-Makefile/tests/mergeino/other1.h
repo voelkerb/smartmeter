@@ -1,1 +1,0 @@
-void other1(uint8_t data);
