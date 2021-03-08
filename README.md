@@ -41,10 +41,10 @@ Depending on your requirements, you might either build [Version 1.0](/Schematic/
         * A little bit more expensive (parts around 70€).
 
 Steps to build your own SmartMeter:
-1. Make the PCB ([Version 1.0](/Schematic/Version_1) or [Version 2.0](/Schematic/Version_2)). I recommend to use [JLC](https://jlcpcb.com) as it is super cheap and the quality is still decent.
+1. Make the PCB ([Version 1.0](/Schematic/Version_1) or [Version 2.0](/Schematic/Version_2)) with [SampleBoard](/Schematic/SampleBoard)). I recommend to use [JLC](https://jlcpcb.com) as it is super cheap and the quality is still decent.
 2. Buy the parts listed under [BOM](/BOM).
 3. Solder everything together. We used a small reflow oven, but it could also be done using a fine soldering iron. 
-4. Buy a matching housing. We highly recommend to use [this one](TODO) as the PCB was specially designed for it, the mounting holes match, and it is safe to use with 230V. It further can be installed inside fuse boxes at regular DIN rails. Also see the CAM milling files to generate cutouts for USB and ethernet and mounting plates for the sampler board (see [Housing](/Hosuing)). 
+4. Buy a matching housing. We highly recommend to use [this one](https://www.voelkner.de/products/694730/Weltron-MR9-C-FA-RAL7035-ABS-Hutschienen-Gehaeuse-157.5-x-90-x-68-ABS-Lichtgrau-RAL-7035-1St..html) as the PCB was specially designed for it, the mounting holes match, and it is safe to use with 230V. It further can be installed inside fuse boxes at regular DIN rails. Also see the CAM milling files to generate cutouts for USB and ethernet and mounting plates for the sampler board (see [Housing](/Hosuing)). 
 5. Wire the SmartMeter using the following diagram. 
 
 <img src="/docu/figures/installation.png">
