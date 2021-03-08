@@ -17,8 +17,9 @@
 #include "constDefine.h"
 #include "enums.h"
 #include "src/multiLogger/src/multiLogger.h"
+#include "src/time/src/timeHandling.h"
 #include "src/DS3231_RTC/src/DS3231_RTC.h"
-#include "src/ADE9000/ADE9000.h"
+#include "src/ADE9000/src/ADE9000.h"
 #include "src/config/config.h"
 #include "src/network/src/network.h"
 #include "src/ringbuffer/src/ringbuffer.h"
@@ -226,7 +227,7 @@ void setup() {
   config.load();
 
   coreFreq = getCpuFrequencyMhz();
-  logger.log(DEBUG, "%s @ firmware %s/%s", config.name, __DATE__, __TIME__);
+  logger.log(DEBUG, "%s @ firmware %s/%s", config.netConf.name, __DATE__, __TIME__);
   logger.log(DEBUG, "Core @ %u MHz", coreFreq);
 
 
@@ -235,7 +236,7 @@ void setup() {
   successAll &= success;
   // Try to use internal ram for buffering, but still indicate the missing ram
   if (!success) {
-    success = ringBuffer.setSize(RAM_BUF_SIZE, false);
+    success = ringBuffer.init();
     if (!success) logger.log(ERROR, "RAM init failed: %i bytes", RAM_BUF_SIZE);
   }
   // NOTE: ERROR LED and ADE PM1 share the same pin.
@@ -252,14 +253,15 @@ void setup() {
   else digitalWrite(ERROR_LED, HIGH);
   logger.log(ALL, "Connecting Network");
 
-  Network::init(&config, onNetworkConnect, onNetworkDisconnect, true);
+  // Init network connection
+  Network::init(&config.netConf, onNetworkConnect, onNetworkDisconnect, false, &logger);
   Network::initPHY(ETH_ADDR, ETH_POWER_PIN, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_TYPE, ETH_CLK_MODE);
   setupOTA();
 
   response.reserve(2*COMMAND_MAX_SIZE);
 
   // Set mqtt and callbacks
-  mqtt.init(config.mqttServer, config.name);
+  mqtt.init(config.mqttServer, config.netConf.name);
   mqtt.onConnect = &onMQTTConnect;
   mqtt.onDisconnect = &onMQTTDisconnect;
   mqtt.onMessage = &mqttCallback;
@@ -510,7 +512,7 @@ void sendDeviceInfo(Stream * sender) {
   compiled += __TIME__;
   docSend["compiled"] = compiled;
   docSend["sys_time"] = myTime.timeStr();
-  docSend["name"] = config.name;
+  docSend["name"] = config.netConf.name;
   docSend["ip"] = Network::localIP().toString();
   docSend["mqtt_server"] = config.mqttServer;
   docSend["stream_server"] = config.streamServer;
@@ -521,13 +523,17 @@ void sendDeviceInfo(Stream * sender) {
   docSend["rtc"] = rtc.connected;
   docSend["state"] = state != SampleState::IDLE ? "busy" : "idle";
   String ssids = "[";
-  for (size_t i = 0; i < config.numAPs; i++) {
-    ssids += config.wifiSSIDs[i];
-    if (i < config.numAPs-1) ssids += ", ";
+  for (size_t i = 0; i < config.netConf.numAPs; i++) {
+    ssids += config.netConf.SSIDs[i];
+    if (i < config.netConf.numAPs-1) ssids += ", ";
   }
   ssids += "]";
   docSend["ssids"] = ssids;
-  docSend["ssid"] = WiFi.SSID();
+  if (not Network::ethernet) {
+    docSend["ssid"] = WiFi.SSID();
+    docSend["rssi"] = WiFi.RSSI();
+    docSend["bssid"] = Network::getBSSID();
+  }
   response = "";
   serializeJson(docSend, response);
   response = LOG_PREFIX + response;
@@ -540,7 +546,7 @@ void sendDeviceInfo(Stream * sender) {
 void sendStreamInfo(Stream * sender) {
   JsonObject obj = docSend.to<JsonObject>();
   obj.clear();
-  docSend["name"] = config.name;
+  docSend["name"] = config.netConf.name;
   docSend["measures"] = measuresToStr(streamConfig.measures);
   docSend["chunksize"] = streamConfig.chunkSize;
   docSend["samplingrate"] = streamConfig.samplingRate;
@@ -1588,7 +1594,7 @@ void initStreamServer() {
  * stored in the eeprom, construct using prefix.
  ****************************************************/
 void initMDNS() {
-  char * name = config.name;
+  char * name = config.netConf.name;
   if (strlen(name) == 0) {
     logger.log(ERROR, "Sth wrong with mdns");
     strcpy(name,"smartMeterX");
@@ -1619,16 +1625,16 @@ void mqttSubscribe() {
   logger.log("Subscribing to: %s", response.c_str());
   mqtt.subscribe(response.c_str());
   
-  snprintf(&mqttTopicPubSwitch[0], MAX_MQTT_TOPIC_LEN, "%s%c%s%c", MQTT_TOPIC_BASE, MQTT_TOPIC_SEPARATOR, config.name, MQTT_TOPIC_SEPARATOR);
+  snprintf(&mqttTopicPubSwitch[0], MAX_MQTT_TOPIC_LEN, "%s%c%s%c", MQTT_TOPIC_BASE, MQTT_TOPIC_SEPARATOR, config.netConf.name, MQTT_TOPIC_SEPARATOR);
 
   response = mqttTopicPubSwitch;
   response += "+";
   logger.log("Subscribing to: %s", response.c_str());
   mqtt.subscribe(response.c_str());
   
-  snprintf(&mqttTopicPubSwitch[0], MAX_MQTT_TOPIC_LEN, "%s%c%s%c%s%c%s", MQTT_TOPIC_BASE, MQTT_TOPIC_SEPARATOR, config.name, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_STATE, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_SWITCH);
-  snprintf(&mqttTopicPubSample[0], MAX_MQTT_TOPIC_LEN, "%s%c%s%c%s%c%s", MQTT_TOPIC_BASE, MQTT_TOPIC_SEPARATOR, config.name, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_STATE, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_SAMPLE);
-  snprintf(&mqttTopicPubInfo[0], MAX_MQTT_TOPIC_LEN, "%s%c%s%c%s%c%s", MQTT_TOPIC_BASE, MQTT_TOPIC_SEPARATOR, config.name, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_STATE, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_INFO);
+  snprintf(&mqttTopicPubSwitch[0], MAX_MQTT_TOPIC_LEN, "%s%c%s%c%s%c%s", MQTT_TOPIC_BASE, MQTT_TOPIC_SEPARATOR, config.netConf.name, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_STATE, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_SWITCH);
+  snprintf(&mqttTopicPubSample[0], MAX_MQTT_TOPIC_LEN, "%s%c%s%c%s%c%s", MQTT_TOPIC_BASE, MQTT_TOPIC_SEPARATOR, config.netConf.name, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_STATE, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_SAMPLE);
+  snprintf(&mqttTopicPubInfo[0], MAX_MQTT_TOPIC_LEN, "%s%c%s%c%s%c%s", MQTT_TOPIC_BASE, MQTT_TOPIC_SEPARATOR, config.netConf.name, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_STATE, MQTT_TOPIC_SEPARATOR, MQTT_TOPIC_INFO);
 }
 
 /****************************************************
@@ -1638,7 +1644,7 @@ void mqttSubscribe() {
  ****************************************************/
 void printInfoString() {
   // Name and firmware
-  logger.log("%s @ firmware: %s/%s", config.name, __DATE__, __TIME__);
+  logger.log("%s @ firmware: %s/%s", config.netConf.name, __DATE__, __TIME__);
 
   logger.log("Using %d bytes %s", ringBuffer.getSize(), ringBuffer.inPSRAM()?"PSRAM":"RAM");
  
@@ -1648,8 +1654,8 @@ void printInfoString() {
     logger.log("No RTC");
   }
   logger.append("Known Networks: [");
-  for (size_t i = 0; i < config.numAPs; i++) {
-    logger.append("%s%s", config.wifiSSIDs[i], i < config.numAPs-1?", ":"");
+  for (size_t i = 0; i < config.netConf.numAPs; i++) {
+    logger.append("%s%s", config.netConf.SSIDs[i], i < config.netConf.numAPs-1?", ":"");
   }
   logger.flushAppended();
 }
@@ -1720,7 +1726,7 @@ void ntpSynced() {
 unsigned int oldPercent = 0;
 void setupOTA() {
   // Same name as mdns
-  ArduinoOTA.setHostname(config.name);
+  ArduinoOTA.setHostname(config.netConf.name);
   ArduinoOTA.setPassword("energy"); 
   // Password can be set with it's md5 value as well
   // MD5(admin) = 21232f297a57a5a743894a0e4a801fc3

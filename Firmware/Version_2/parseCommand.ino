@@ -480,7 +480,7 @@ void handleJSON() {
         docSend["msg"] = response;
         return;
       }
-      char * name = config.name;
+      char * name = config.netConf.name;
       response = F("Set MDNS name to: ");
       response += name;
       //docSend["msg"] = sprintf( %s", name);
@@ -521,7 +521,7 @@ void handleJSON() {
       docSend["mqtt_server"] = address;
       docSend["error"] = false;
       mqtt.disconnect();
-      mqtt.init(config.mqttServer, config.name);
+      mqtt.init(config.mqttServer, config.netConf.name);
       mqtt.connect();
 
     } else {
@@ -620,8 +620,8 @@ void handleJSON() {
         return;
       }
       if (success == 1)  {
-        char * name = config.wifiSSIDs[config.numAPs-1];
-        char * pwd = config.wifiPWDs[config.numAPs-1];
+        char * name = config.netConf.SSIDs[config.netConf.numAPs-1];
+        char * pwd = config.netConf.PWDs[config.netConf.numAPs-1];
         response = F("New Ap, SSID: ");
         response += name;
         response += F(", PW: ");
@@ -640,8 +640,8 @@ void handleJSON() {
 
       docSend["msg"] = response;
       String ssids = "[";
-      for (int i = 0; i < config.numAPs; i++) {
-        ssids += config.wifiSSIDs[i];
+      for (int i = 0; i < config.netConf.numAPs; i++) {
+        ssids += config.netConf.SSIDs[i];
         ssids += ", ";
       }
       ssids += "]";
@@ -683,8 +683,8 @@ void handleJSON() {
       }
       docSend["msg"] = response;
       String ssids = "[";
-      for (int i = 0; i < config.numAPs; i++) {
-        ssids += config.wifiSSIDs[i];
+      for (int i = 0; i < config.netConf.numAPs; i++) {
+        ssids += config.netConf.SSIDs[i];
         ssids += ", ";
       }
       ssids += "]";

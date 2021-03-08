@@ -19,6 +19,9 @@
 #include "WProgram.h"
 #endif
 
+// Include for network config
+#include "../network/src/network.h"
+
 // If you cahange any of these values, the config on all devices will be bricked
 #define MAX_WIFI_APS 4
 #define MAX_STRING_LEN 25
@@ -61,13 +64,10 @@ class Configuration {
     void setTimeServerAddress(char * serverAddress);
     void setCalibration(float * values);
 
-    char name[MAX_NAME_LEN];
+    NetworkConf netConf;
     char mqttServer[MAX_IP_LEN];
     char streamServer[MAX_IP_LEN];
     char timeServer[MAX_DNS_LEN];
-    unsigned int numAPs;
-    char wifiSSIDs[MAX_WIFI_APS][MAX_STRING_LEN];
-    char wifiPWDs[MAX_WIFI_APS][MAX_STRING_LEN];
 
     float cal[CALIBRATION_LEN];
   private:

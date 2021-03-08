@@ -11,15 +11,9 @@
 #include "config.h"
 
 Configuration::Configuration() {
-  for (size_t i = 0; i < MAX_NAME_LEN; i++) name[i] = '\0';
-  for (size_t i = 0; i < MAX_WIFI_APS; i++) {
-    for (int j = 0; j < MAX_SSID_LEN; j++) wifiSSIDs[i][j] = '\0';
-    for (int j = 0; j < MAX_PWD_LEN; j++) wifiPWDs[i][j] = '\0';
-  }
-  for (size_t i = 0; i < MAX_IP_LEN; i++) mqttServer[i] = '\0';
-  for (size_t i = 0; i < MAX_IP_LEN; i++) streamServer[i] = '\0';
-  for (size_t i = 0; i < MAX_DNS_LEN; i++) timeServer[i] = '\0';
-  numAPs = 0;
+  sprintf(mqttServer, "");
+  sprintf(streamServer, "");
+  sprintf(timeServer, "");
 
   for (int i = 0; i < CALIBRATION_LEN; i++) cal[i] = 1.0;
 }
@@ -32,38 +26,32 @@ void Configuration::init() {
 
 void Configuration::makeDefault(bool resetName) {
   if (resetName) {
-    for (size_t i = 0; i < MAX_NAME_LEN; i++) name[i] = '\0';
-    strcpy(name, "smartmeterX");
+    sprintf(netConf.name, "smartmeterX");
   }
   
-  for (size_t i = 0; i < MAX_IP_LEN; i++) mqttServer[i] = '\0';
-  strcpy(mqttServer, NO_SERVER);
-
-  for (size_t i = 0; i < MAX_IP_LEN; i++) streamServer[i] = '\0';
-  strcpy(streamServer, NO_SERVER);
-
-  for (size_t i = 0; i < MAX_DNS_LEN; i++) timeServer[i] = '\0';
-  strcpy(timeServer, "de.pool.ntp.org");
+  sprintf(mqttServer, NO_SERVER);
+  sprintf(streamServer, NO_SERVER);
+  sprintf(timeServer, "time.google.com");
 
   for (size_t i = 0; i < MAX_WIFI_APS; i++) {
-    for (int j = 0; j < MAX_SSID_LEN; j++) wifiSSIDs[i][j] = '\0';
-    for (int j = 0; j < MAX_PWD_LEN; j++) wifiPWDs[i][j] = '\0';
+    sprintf(&netConf.SSIDs[i][0], "");
+    sprintf(&netConf.PWDs[i][0], "");
   }
-  numAPs = 0;
+  netConf.numAPs = 0;
 
   // TODO: Remove these credentials
-  strcpy(wifiSSIDs[0], "esewifi");
-  strcpy(wifiPWDs[0], "silkykayak943");
-  numAPs++;
-  strcpy(wifiSSIDs[1], "energywifi");
-  strcpy(wifiPWDs[1], "silkykayak943");
-  numAPs++;
+  strcpy(netConf.SSIDs[netConf.numAPs], "esewifi");
+  strcpy(netConf.PWDs[netConf.numAPs], "silkykayak943");
+  netConf.numAPs++;
+  strcpy(netConf.SSIDs[netConf.numAPs], "energywifi");
+  strcpy(netConf.PWDs[netConf.numAPs], "silkykayak943");
+  netConf.numAPs++;
 
   for (int i = 0; i < CALIBRATION_LEN; i++) cal[i] = 1.0;
 }
 
 void Configuration::load() {
-  if (!loadString(NAME_START_ADDRESS, name, MAX_NAME_LEN)) {
+  if (!loadString(NAME_START_ADDRESS, netConf.name, MAX_NAME_LEN)) {
     makeDefault();
     store();
   }
@@ -90,7 +78,7 @@ void Configuration::load() {
 }
 
 void Configuration::store() {
-  storeString(NAME_START_ADDRESS, name);
+  storeString(NAME_START_ADDRESS, netConf.name);
   storeWiFi();
   storeString(MQTT_START_ADDRESS, mqttServer);
   storeString(STREAM_SERVER_ADDRESS, streamServer);
@@ -115,21 +103,21 @@ void Configuration::setCalibration(float * values) {
 bool Configuration::removeWiFi(char * ssid) {
   int idx = -1;
   for (int ap = 0; ap < MAX_WIFI_APS; ap++) {
-    if (strcmp(ssid, wifiSSIDs[ap]) == 0) {
+    if (strcmp(ssid, netConf.SSIDs[ap]) == 0) {
       idx = ap;
       break;
     }
   }
   if (idx == -1) return false;
-  for (size_t i = idx; i < numAPs-1; i++) {
-    strcpy(wifiSSIDs[i], wifiSSIDs[i+1]);
-    strcpy(wifiPWDs[i], wifiPWDs[i+1]);
+  for (size_t i = idx; i < netConf.numAPs-1; i++) {
+    strcpy(netConf.SSIDs[i], netConf.SSIDs[i+1]);
+    strcpy(netConf.PWDs[i], netConf.PWDs[i+1]);
   }
   // Indicate end of array here
-  strcpy(wifiSSIDs[numAPs-1], "");
-  strcpy(wifiPWDs[numAPs-1], "");
+  strcpy(netConf.SSIDs[netConf.numAPs-1], "");
+  strcpy(netConf.PWDs[netConf.numAPs-1], "");
 
-  numAPs--;
+  netConf.numAPs--;
   storeWiFi(); // Note a little bit overhead but who cares
   return true;
 }
@@ -137,43 +125,42 @@ bool Configuration::removeWiFi(char * ssid) {
 int Configuration::addWiFi(char * ssid, char * pwd) {
   int idx = -1;
   for (int ap = 0; ap < MAX_WIFI_APS; ap++) {
-    if (strcmp(ssid, wifiSSIDs[ap]) == 0) {
+    if (strcmp(ssid, netConf.SSIDs[ap]) == 0) {
       idx = ap;
       break;
     }
   }
   if (idx != -1) return -1;
-  if (numAPs >= MAX_WIFI_APS) return 0;
-  strcpy(wifiSSIDs[numAPs], ssid);
-  strcpy(wifiPWDs[numAPs], pwd);
-  numAPs++;
+  if (netConf.numAPs >= MAX_WIFI_APS) return 0;
+  strcpy(netConf.SSIDs[netConf.numAPs], ssid);
+  strcpy(netConf.PWDs[netConf.numAPs], pwd);
+  netConf.numAPs++;
   storeWiFi(); // NOTE: a little bit overhead but who cares
   return 1;
 }
 
 void Configuration::loadWiFi() {
   unsigned int address = WIFI_START_ADDRESS;
-  numAPs = 0;
+  netConf.numAPs = 0;
   for (int ap = 0; ap < MAX_WIFI_APS; ap++) {
-    loadString(address, wifiSSIDs[ap], MAX_SSID_LEN);
-    if (strlen(wifiSSIDs[ap]) == 0) break;
+    loadString(address, netConf.SSIDs[ap], MAX_SSID_LEN);
+    if (strlen(netConf.SSIDs[ap]) == 0) break;
     address += MAX_SSID_LEN+1;
-    loadString(address, wifiPWDs[ap], MAX_PWD_LEN);
+    loadString(address, netConf.PWDs[ap], MAX_PWD_LEN);
     address += MAX_PWD_LEN+1;
-    numAPs++;
+    netConf.numAPs++;
   }
 }
 
 void Configuration::storeWiFi() {
   unsigned int address = WIFI_START_ADDRESS;
   for (int ap = 0; ap < MAX_WIFI_APS; ap++) {
-    storeString(address, wifiSSIDs[ap]);
+    storeString(address, netConf.SSIDs[ap]);
     address += MAX_SSID_LEN+1;
-    storeString(address, wifiPWDs[ap]);
+    storeString(address, netConf.PWDs[ap]);
     address += MAX_PWD_LEN+1;
   }
 }
-
 
 
 void Configuration::setMQTTServerAddress(char * serverAddress) {
@@ -192,8 +179,8 @@ void Configuration::setStreamServerAddress(char * serverAddress) {
 }
 
 void Configuration::setName(char * newName) {
-  strcpy(name, newName);
-  storeString(NAME_START_ADDRESS, name);
+  strcpy(netConf.name, newName);
+  storeString(NAME_START_ADDRESS, netConf.name);
 }
 
 bool Configuration::loadString(unsigned int address, char * str, unsigned int max_len) {
