@@ -45,12 +45,16 @@ Steps to build your own SmartMeter:
 2. Buy the parts listed under [BOM](/BOM).
 3. Solder everything together. We used a small reflow oven, but it could also be done using a fine soldering iron. 
 4. Buy a matching housing. We highly recommend to use [this one](https://www.voelkner.de/products/694730/Weltron-MR9-C-FA-RAL7035-ABS-Hutschienen-Gehaeuse-157.5-x-90-x-68-ABS-Lichtgrau-RAL-7035-1St..html) as the PCB was specially designed for it, the mounting holes match, and it is safe to use with 230V. It further can be installed inside fuse boxes at regular DIN rails. Also see the CAM milling files to generate cutouts for USB and ethernet and mounting plates for the sampler board (see [Housing](/Hosuing)). 
-5. Wire the SmartMeter using the following diagram. 
+5. Install the SmartMeter at the DIN rail inside fuse box (that should be done by an electrician).
+
+<img src="/docu/figures/installation2.png">
+
+6. Wire the SmartMeter using the following diagram. 
 
 <img src="/docu/figures/installation.png">
 
-6. Upload the [firmware](/Firmware) according to the instructions for your version. 
-7. Interface with the SmartMeter accordingly as stated [here](/docu/README_Firmware_Cmds.md) 
+7. Upload the [firmware](/Firmware) according to the instructions for your version. 
+8. Interface with the SmartMeter accordingly as stated [here](/docu/README_Firmware_Cmds.md) 
 
 # Use cases
 ## Smart homes
