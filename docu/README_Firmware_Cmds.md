@@ -1,24 +1,51 @@
-[smartmeter]: (https://github.com/voelkerb/smartmeter)
+[SmartMeter]: (https://github.com/voelkerb/SmartMeter)
 
 # How to interface with a SmartMeter
 
 ## The Basics
-The [smartmeter] has to be connected to power. \
-At first boot, the [smartmeter] will open a WiFi-Network called "smartmeterX".\
+The [SmartMeter] has to be connected to power. \
+At first boot, the [SmartMeter] will open a WiFi-Network called "smartmeterX".\
 It is not password protected, so you can simply connect to it. 
 Open a TCP connection to IP ```smartmeterX.local``` (or ```192.168.4.1```) at port ```54321```.
-This will show you basic information of the [smartmeter] as a JSON encoded messages.
+This will show you basic information of the [SmartMeter] as a JSON encoded messages.
 ```bash
-Info:{"cmd":"info","type":"smartmeter","version":"2.2","compiled":"Mar_2_2021_09:57:58","sys_time":"03/02/2021 10:37:07.662","name":"smartmeterX","ip":"192.168.4.1","mqtt_server":"-","stream_server":"-","time_server":"time.google.com","sampling_rate":4000,"buffer_size":3670016,"psram":true,"rtc":false,"calV":1,"calI":1,"state":"idle","relay":1,"calibration":[1,1],"ssids":"[energywifi]","ssid":"-","rssi":-71,"bssid":"-"}
+Info:{"cmd":"info","type":"SmartMeter","version":"2.2","compiled":"Mar_2_2021_09:57:58","sys_time":"03/02/2021 10:37:07.662","name":"smartmeterX","ip":"192.168.4.1","mqtt_server":"-","stream_server":"-","time_server":"time.google.com","sampling_rate":4000,"buffer_size":3670016,"psram":true,"rtc":false,"calV":1,"calI":1,"state":"idle","relay":1,"calibration":[1,1],"ssids":"[energywifi]","ssid":"-","rssi":-71,"bssid":"-"}
 ```
 You will further notice that a lifeness log messages is sent each second.
-We will further see how to use commands to interface with a smartmeter.
+We will further see how to use commands to interface with a SmartMeter.
 
-**Each command sent to the [smartmeter] over USB or a TCP channel requires JSON encoding and is answered by a JSON encoded answer message preceded by a the text "Info:". If an error occurred while processing the commmand, the error key is set true in the returned JSON.**
+**Each command sent to the [SmartMeter] over USB or a TCP channel requires JSON encoding and is answered by a JSON encoded answer message preceded by a the text "Info:". If an error occurred while processing the commmand, the error key is set true in the returned JSON.**
+
+**Each command sent to the [PowerMeter] over USB or a TCP channel requires JSON encoding as ```{"cmd":<cmdName>,[optional]}``` and is answered by a JSON encoded answer message preceded by a the text "Info:". If an error occurred while processing the commmand, the error key is set true in the returned JSON.**
+
+## Overview
+| CMD        | Description         
+| ------------- |-------------|
+| ["info"](#info)                                | Get basic information                        |
+| ["mdns"](#name)                                | Set new mDNS and general [PowerMeter] name   |
+| ["addWifi"](#wifi)                             | Add WiFi AP                                  |
+| ["delWifi"](#wifi)                             | Remove WiFi AP                               |
+| ["calibration"](#calibration)                  | Set calibration parameter                    |
+| ["restart"](#restart)                          | Restart [PowerMeter]                         |
+| ["dailyRestart"](#restart)                     | Schedule reset every day                     |
+| ["factoryReset"](#reset)                       | Reset to standard values                     |
+| ["basicReset"](#reset)                         | Reset everything but the name                |
+| ["resetEnergy"](#reset-energy)                 | Reset accumulated energy                     |
+| ["sample"](#using-a-sampling-command)          | Start receiving high frequency data          |
+| ["reqSamples"](#using-a-sampling-command)      | Get certain amount of high frequency samples |
+| ["cts"](#pause-streaming)                      | Allow/forbid to stream samples               |
+| ["stop"](#stop-streaming)                      | Stop receiving data                          |
+| ["log"](#log-level)                            | Change log level                             |
+| ["clearLog"](#log)                             | Clear logs                                   |
+| ["getLog"](#log)                               | Returns all warning and error log messages   |
+| ["mqttServer"](#mqtt)                          | Set MQTT server                              |
+| ["streamServer"](#using-a-stream-server)       | Set stream server                            |
+| ["ntp"](#time-synchronization)                 | Trigger NTP sync                             |
+| ["timeServer"](#time-synchronization)          | Set time server for NTP                      |
 
 ## Info
 ```{"cmd":"info"}```\
-The info command will print information about the [smartmeter]. As this is the most often required command, it is automatically sent to each new connected TCP client. 
+The info command will print information about the [SmartMeter]. As this is the most often required command, it is automatically sent to each new connected TCP client. 
 
 ## Log Level
 ```{"cmd":"log","level":<logLevel>}```\
@@ -30,7 +57,7 @@ Info:{"error":false,"msg":"Log Level set to: warning"}
 
 ## Name
 ```{"cmd":"mdns","payload":{"name":"<newName>"}}```\
-This command should be used to give the [smartmeter] a new unique name.
+This command should be used to give the [SmartMeter] a new unique name.
 It will be used to announce presence over MDNS and if no known network is found, an AP is opened using this name.
 
 ```bash
@@ -40,7 +67,7 @@ Info:{"error":false,"msg":"Set MDNS name to: smartmeterX","mdns_name":"smartmete
 
 ## Restart
 ```{"cmd":"restart"}```\
-Restarts the [smartmeter]. The TCP connection will be lost.
+Restarts the [SmartMeter]. The TCP connection will be lost.
 
 ## Reset
 ```{"cmd":"factoryReset"}```\
@@ -50,13 +77,15 @@ Resets everything to defaults. The default values are:
 - timeserver: _time.google.com_
 - streamserver: -
 - mqtt broker: -
-- _calV_ = _calI_ = 1.0
+- _energy<LX><U/I>_ = 1.0
+- _energy<LX>_ = 0
+- _resetHour_ = _resetMinute_ = -1
 
 If you want to reset everything except the name, use: ```{"cmd":"basicReset"}```
 
 ## Log
 ```{"cmd":"getLog"}```\
-The [smartmeter] has some decent logging capabilities. Despite logging over a connected TCP connection and Serial. _Warning_ and _Error_ messages are logged to internal flash memory.
+The [SmartMeter] has some decent logging capabilities. Despite logging over a connected TCP connection and Serial. _Warning_ and _Error_ messages are logged to internal flash memory.
 The _getLog_ command will dump the all logs in the flash and contains two JSON response messages.
 ```bash
 Info:{"cmd":"log","msg":"*** LOGFile *** [E]03/02 11:26:20: Cannot connect to MQTT Server -//n*** LOGFile *** "}
@@ -66,10 +95,16 @@ All newlines are replaces by "_//n_".\
 To clear all log messages, use ```{"cmd":"clearLog"}```.
 
 ## Calibration
-```{"cmd":"calibration","calV":<calV>,"calI":<calI>}```\
-TODO: Implement.
+```{"cmd":"calibration","cal":[<calV_l1>,<calI_l1>,<calV_l2>,<calI_l2>,<calV_l3>,<calI_l3>]```\
+Calibrate the [SmartMeter].
+```<calV_LX>``` and ```<calI_LX>``` are floating point values with the default value 1.0.
+Every measured voltage and current value is multiplied by the calibration factor. Power and Energy are multiplied by ```<calV_LX>```*```<calI_LX>```.
 
-## Set time server
+## Reset Energy
+```{"cmd":"resetEnergy"}```\
+Simply resets the accumulated energy stored in flash. 
+
+## Time synchronization
 ```{"cmd":"ntp"}```\
 Will perform an NTP time synchronization.
 ```
@@ -93,13 +128,13 @@ Info:{"error":false,"msg":"Removed SSID: Test","ssids":"[energywifi]"}
 ```
 
 ## MQTT
-Once connected to an MQTT server, the smartmeter will publish the current power consumption each 5 seconds and each state change of the relay. 
+Once connected to an MQTT server, the SmartMeter will publish the current power consumption each 5 seconds and each state change of the relay. 
 To set the MQTT server, use the command: ```{"cmd":"mqttServer", "payload":{"server":"<ServerAddress>"}}```
 Currently, only the MQTT standard server port ```1883``` is supported. 
 ```bash
 Info:[I]03/02 11:38:42: MQTT connected to 192.168.0.13
-Info:[I]03/02 11:38:42: Subscribing to: smartmeter/+
-Info:[I]03/02 11:38:42: Subscribing to: smartmeter/smartmeterX/+
+Info:[I]03/02 11:38:42: Subscribing to: SmartMeter/+
+Info:[I]03/02 11:38:42: Subscribing to: SmartMeter/smartmeterX/+
 Info:{"error":false,"msg":"Set MQTTServer address to: 192.168.0.13","mqtt_server":"192.168.0.13"}
 ```
 
@@ -108,53 +143,54 @@ NOTE: In sampling mode, MQTT is disabled for performance reason.
 
 ### Receiving MQTT messages
 Each 5 seconds, information about the power consumption is sent.
-It contains the sum of the _active power_ in _Watt_ of all phases, the mean of the _RMS voltage_ in _V_ of all phases, the sum of the _RMS current in _A_ of all phases and the current timestamp.
+It contains the sum of the _active power_ in _Watt_ and _active energy_ in _kWh_ of all grid lines, the mean of the _RMS voltage_ in _V_ of all grid lines, the sum of the _RMS current in _A_ of all grid lines and the current timestamp.
+You can also enable 
 ```bash
 powermeter/smartmeter001/state/sample {"power":1116.89,"current":4.82,"volt":236.56,"ts":"1614681575"}
 ```
 
 ### Sending MQTT messages
 Mqtt can also be used to send any command. Special topics are used to switch the relay or to get basic electricity related measurements, but any of the available commands can be sent.
-* Sample a single value using topic ```smartmeter/<name>/sample``` and message one of ```v,i,p,q,s``` (_RMS voltage_,_RMS Current_, _active_, _reactive_, or _apparent power_ ). On no, or any other message, the _active power_ is sent.
+* Sample a single value using topic ```powermeter/<name>/sample``` and message one of ```v,i,p,q,s``` (_RMS voltage_,_RMS Current_, _active_, _reactive_, or _apparent power_ ). On no, or any other message, the _active power_ is sent.
   ```bash
-  mosquitto_pub -h 192.168.0.13 -t 'smartmeter/smartmeter001/sample' -m 'v'
+  mosquitto_pub -h 192.168.0.13 -t 'powermeter/smartmeter001/sample' -m 'v'
   ````
   The response contains a JSON dictionary with the key _value_, _unit_ and _ts_, example:
   ```bash
   powermeter/smartmeter001/state/info {"value":"228.43,228.48,228.33","unit":"V","ts":"03/08/2021 11:42:34.848"}
   ```
-  The individual values represent the values for the indivudal phases (L1, L2, L3)
-* You can also send any command, which can be sent over a bare TCP connection using topic ```smartmeter/<name>/cmd```
+  The individual values represent the values for the indivudal grid lines (L1, L2, L3)
+* You can also send any command, which can be sent over a bare TCP connection using topic ```powermeter/<name>/cmd```
   ```bash
-  mosquitto_pub -h 192.168.0.13 -t 'powermeter/smartmeter27/cmd' -m '{"cmd":"info"}'
+  mosquitto_pub -h 192.168.0.13 -t 'powermeter/smartmeter001/cmd' -m '{"cmd":"info"}'
   ````
-* If you have multiple smartmeters and want to send the message to all at the same time (e.g. to change some global settings such as the MQTT broker), you can simple ditch the specific smartmeter name and all will answer. 
+* If you have multiple SmartMeters and want to send the message to all at the same time (e.g. to change some global settings such as the MQTT broker), you can simple ditch the specific SmartMeter name and all will answer. 
   ```bash
   powermeter/sample p
   powermeter/smartmeter001/state/sample {"value":"228.43,228.48,228.33","unit":"V","ts":"03/08/2021 11:42:34.848"}
-  powermeter/smartmeter002/state/sample {"value":"228.44,228.45,229.10","unit":"V","ts":"03/08/2021 11:42:34.947"}
+  powermeter/SmartMeter002/state/sample {"value":"228.44,228.45,229.10","unit":"V","ts":"03/08/2021 11:42:34.947"}
   ...
   ```
 
-## Getting Data
-Finally, to get some high frequency data out of the smartmeters beyond whats possible using [mqtt](#mqtt), you have multiple possibilities. 
+## Getting High Frequency Data
+Finally, to get some high frequency data out of the SmartMeters beyond whats possible using [mqtt](#mqtt), you have multiple possibilities. 
 
 ### Using FFmpeg
 Using ffmpeg is by far the most simple way to store high frequency data. Thus, the sampling rate remains at 4kHz and only current and voltage measurements are streamed.
 On your host computer, simply install [ffmpeg](https://ffmpeg.org) and run the following:
 ```bash
-ffmpeg -nostdin -hide_banner -fflags +nobuffer+flush_packets -f f32le -ar 9000.0 -guess_layout_max 0 -ac 2.0 -flush_packets 1 -thread_queue_size 512 -analyzeduration 0 -i tcp://<smartmeterIP>:54322 -c:a wavpack -frame_size 8000 -metadata:s:a:0 CHANNELS=2 -metadata:s:a:0 CHANNEL_TAGS="v_l1,i_l1,v_l2,i_l2,v_l3,i_l3" -metadata:s:a:0 title="<smartmeterName>" -map 0 -y output.mkv 
+ffmpeg -nostdin -hide_banner -fflags +nobuffer+flush_packets -f f32le -ar 9000.0 -guess_layout_max 0 -ac 2.0 -flush_packets 1 -thread_queue_size 512 -analyzeduration 0 -i tcp://<SmartMeterIP>:54322 -c:a wavpack -frame_size 8000 -metadata:s:a:0 CHANNELS=2 -metadata:s:a:0 CHANNEL_TAGS="v_l1,i_l1,v_l2,i_l2,v_l3,i_l3" -metadata:s:a:0 title="<smartmeterName>" -map 0 -y output.mkv 
 ```
 You can directly use the MDNS name for ```<smartmeterIP>```. Some of the settings in call such as the metadata are of course optional. 
 
 ### Using a stream server
 At your future data sink (which simply might be your computer), host a TCP server at port ```54322```.
-Find you IP address and set it as the target stream server for each smartmeter using the command ```{"cmd":"streamServer", "payload":{"server":"<YourIp>"}}```.
-The [smartmeter] will check if the stream server is available each 30s and automatically connects to it.
+Find you IP address and set it as the target stream server for each SmartMeter using the command ```{"cmd":"streamServer", "payload":{"server":"<YourIp>"}}```.
+The [SmartMeter] will check if the stream server is available each 30s and automatically connects to it.
 For the data format, see [Data Format](#data-format).
 
 ### Using a sampling command
-This is the most complicated command of the smartmeter. It has multiple and potentially optional parameter which will be explained in the following. 
+This is the most complicated command of the SmartMeter. It has multiple and potentially optional parameter which will be explained in the following. 
 ```bash
 {"cmd":"sample", "payload":{"type":"<type>", "measures":"<measures>", "rate":<rate>, "prefix":<prefix>, "port":<port>,"time":<time>,"flowCtr":<flowCtr>,"slot":[<slot>,<slots>],"ntpConf":<ntpConf>}}
 ```
@@ -192,7 +228,7 @@ Parameters:
 
 * ```<ntpConf>``` (optional):
   * Integer, interpreted as milliseconds. The NTP request before starting the sampling needs to be confident within this threshold value. 
-  * NOTE: NTP requests are send over UDP to the specified NTP server. The time it takes to get the answer needs to be considered as well for millisecond resolution. As the request has to be sent to the server and from the server back to the [smartmeter], half of the time the request took is added to the received NTP time. The request is thus only confident up to the time it took to receive the response, as in the worst case - if a response took 10ms - it could be 0ms for sending to the server and 10ms for getting the response. This would mean, the time is off the actual time about 5ms - which is our confidence level. As most sampling is stored relative (start time + sampling rate), getting the start time as exact as possible is crucial. 
+  * NOTE: NTP requests are send over UDP to the specified NTP server. The time it takes to get the answer needs to be considered as well for millisecond resolution. As the request has to be sent to the server and from the server back to the [SmartMeter], half of the time the request took is added to the received NTP time. The request is thus only confident up to the time it took to receive the response, as in the worst case - if a response took 10ms - it could be 0ms for sending to the server and 10ms for getting the response. This would mean, the time is off the actual time about 5ms - which is our confidence level. As most sampling is stored relative (start time + sampling rate), getting the start time as exact as possible is crucial. 
   * Default: no NTP request is sent
 
 * ```<flowCtr>``` (optional):
@@ -200,11 +236,11 @@ Parameters:
   * Default: _false_
   * Request ```<numSamples>``` using the command: ```{"cmd":"reqSamples","samples":<numSamples>}```
     * ```<numSamples>```: long, must be between 10 and 2000
-    * NOTE: In order for the command to work, the [smartmeter] must be sampling and during the sampling command ```flowCtr``` must have been set to _true_!
+    * NOTE: In order for the command to work, the [SmartMeter] must be sampling and during the sampling command ```flowCtr``` must have been set to _true_!
 
 * ```<time>``` (optional):
   * Unix timestamp at which sampling should be started. The timestamp must be in the future more than 500ms but is not allowed to be further in time then 20s. 
-  * NOTE: This can be used to start sampling with multiple devices at an exact point in time. Sampling further starts at a positive voltage zero crossing. Therewith, smartmeters at the same phase are synchronized within 1/f<sub>L</sub> with f<sub>L</sub> being the grid line frequency.  
+  * NOTE: This can be used to start sampling with multiple devices at an exact point in time. Sampling further starts at a positive voltage zero crossing. Therewith, SmartMeters at the same phase are synchronized within 1/f<sub>L</sub> with f<sub>L</sub> being the grid line frequency.  
   * Default: Sampling is started immediately 
 
 * ```[<slot>,<slots>]``` (optional):
@@ -212,7 +248,7 @@ Parameters:
   * ```<slots>``` integer, the total number of slots
   * The idea is that only one device sends data at the same time in a network with multiple device ```d_i```. Each device will only send data if the following condition is true: ```now.seconds%slots == slot```
   * Example: 3 devices _d<sub>i</sub>_ with configs: _d<sub>0</sub> = [0,3]_, _d<sub>1</sub> = [1,3]_, _d<sub>2</sub> = [2,3]_. All devices send data each 3 seconds. e.g. _d<sub>0</sub>_ at second _0,3,6,..._ 
-  * NOTE: This only works, if all data sampled can be send out in this second. If you e.g. have 10 devices, one device has to send 10s of data every 10s within just 1s. If the smartmeter is not able to sent all data within this second, buffer overflows will occur. However, it avoids wifi/tcp collisions caused by multiple smartmeters.
+  * NOTE: This only works, if all data sampled can be send out in this second. If you e.g. have 10 devices, one device has to send 10s of data every 10s within just 1s. If the SmartMeter is not able to sent all data within this second, buffer overflows will occur. However, it avoids wifi/tcp collisions caused by multiple SmartMeters.
   * Default: _false_
 
 ### Pause streaming
