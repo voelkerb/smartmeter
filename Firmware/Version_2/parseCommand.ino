@@ -350,7 +350,7 @@ void handleJSON() {
         return;
       }
       Serial.println("Sending... ");
-      Serial.printf("%u(avail), %u(chunk)\n", ringBuffer.available(), chunk);
+      Serial.printf("%u(avail), %u(chunk)\n", ringBuffer.available(), (uint32_t)chunk);
       long start = millis();
       // Send the chunk of data
       if (streamConfig.stream == StreamType::TCP){
@@ -358,7 +358,7 @@ void handleJSON() {
       } else if (streamConfig.stream == StreamType::UDP){
         writeData(udpClient, chunk);
       }
-      Serial.printf("Took %ums\n", millis()-start);
+      Serial.printf("Took %lums\n", (uint32_t)millis()-start);
     }
   }
   /*********************** STOP COMMAND ****************************/
@@ -513,7 +513,7 @@ void handleJSON() {
         docSend["msg"] = response;
         return;
       }
-      char * address = config.mqttServer;
+      char * address = config.myConf.mqttServer;
       response = F("Set MQTTServer address to: ");
       response += address;
       //docSend["msg"] = sprintf( %s", name);
@@ -521,7 +521,7 @@ void handleJSON() {
       docSend["mqtt_server"] = address;
       docSend["error"] = false;
       mqtt.disconnect();
-      mqtt.init(config.mqttServer, config.netConf.name);
+      mqtt.init(config.myConf.mqttServer, config.netConf.name);
       mqtt.connect();
 
     } else {
@@ -549,7 +549,7 @@ void handleJSON() {
         docSend["msg"] = response;
         return;
       }
-      char * address = config.streamServer;
+      char * address = config.myConf.streamServer;
       response = F("Set StreamServer address to: ");
       response += address;
       //docSend["msg"] = sprintf( %s", name);
@@ -582,7 +582,7 @@ void handleJSON() {
         docSend["msg"] = response;
         return;
       }
-      char * address = config.timeServer;
+      char * address = config.myConf.timeServer;
       response = F("Set TimeServer address to: ");
       response += address;
       //docSend["msg"] = sprintf( %s", name);
@@ -609,11 +609,11 @@ void handleJSON() {
       }
       
       int success = 0;
-      if (strlen(newSSID) < MAX_SSID_LEN and strlen(newPWD) < MAX_PWD_LEN) {
+      if (strlen(newSSID) < MAX_NETWORK_LEN and strlen(newPWD) < MAX_PWD_LEN) {
         success = config.addWiFi((char * )newSSID, (char * )newPWD);
       } else {
         response = F("SSID or PWD too long, max: ");
-        response += MAX_SSID_LEN;
+        response += MAX_NETWORK_LEN;
         response += F(", ");
         response += MAX_PWD_LEN;
         docSend["msg"] = response;
@@ -664,11 +664,11 @@ void handleJSON() {
         return;
       }
       bool success = false;
-      if (strlen(newSSID) < MAX_SSID_LEN) {
+      if (strlen(newSSID) < MAX_NETWORK_LEN) {
         success = config.removeWiFi((char * )newSSID);
       } else {
         response = F("SSID too long, max: ");
-        response += MAX_SSID_LEN;
+        response += MAX_NETWORK_LEN;
         docSend["msg"] = response;
         return;
       }
@@ -715,6 +715,58 @@ void handleJSON() {
     docSend["current_time"] = timeStr;
   }
 
+  /*********************** Calibration COMMAND ****************************/
+    // e.g. {"cmd":"calibration","calV":1.0,"calI":1.0}
+  else if (strcmp(cmd, CMD_CALIBRATION) == 0) {
+    if (state == SampleState::IDLE) {
+      JsonVariant cal_Variant = root["cal"];
+      if (cal_Variant.isNull()) {
+        docSend["msg"] = "Missing cal constants";
+        docSend["error"] = true;
+        return;
+      }
+      JsonArray cal = root["cal"].as<JsonArray>();
+      if (cal.size() < 6) {
+        docSend["msg"] = "Need at least 6 cal constants";
+        docSend["error"] = true;
+        return;
+      }
+      float cali[6] = {0.0f};
+      for (int i = 0; i < 6; i++) {
+        cali[i] = cal[i].as<float>();
+        if (abs(cali[i]) > 2.0 or abs(cali[i]) < 0.5) {
+          snprintf(command, COMMAND_MAX_SIZE, "Calibration parameter %i: %.2f not allowed [0.5-2.0]", i, cali[i]);
+          docSend["msg"] = command;
+          docSend["error"] = true;
+          return;
+        }
+      }
+      config.setCalibration(&cali[0]);
+      ade9k.setCalibration(&cali[0]);
+      snprintf(command, COMMAND_MAX_SIZE, "Calibration set: v1:%.2f, i1:%.2f, v2:%.2f, i2:%.2f, v3:%.2f, i3:%.2f",
+        cali[0], cali[1], cali[2], cali[3], cali[4], cali[5]);
+      docSend["msg"] = command;
+    } else {
+      setBusyResponse();
+      docSend["msg"] = response;
+      docSend["state"] = "busy";
+    }
+  }
+  /*********************** Reset energy COMMAND ****************************/
+  // e.g. {"cmd":"clearLog"}
+  else if (strcmp(cmd, CMD_RESET_ENERGY) == 0) {
+    if (state == SampleState::IDLE) {
+      ade9k.resetEnergy();
+      config.setEnergy(0,0,0);
+      docSend["error"] = false;
+      response = "Energy reset!";
+      docSend["msg"] = response;
+    } else {
+      setBusyResponse();
+      docSend["msg"] = response;
+      docSend["state"] = "busy";
+    }
+  }
   /*********************** Clear Log COMMAND ****************************/
   // e.g. {"cmd":"clearLog"}
   else if (strcmp(cmd, CMD_CLEAR_LOG) == 0) {
@@ -747,6 +799,94 @@ void handleJSON() {
       docSend["msg"] = response;
       docSend["state"] = "busy";
     }
+  }
+
+  /*********************** Daily restart COMMAND ****************************/
+  // e.g. {"cmd":"dailyRestart","hour":0,"minute":0}
+  else if (strcmp(cmd, CMD_DAILY_RESTART) == 0) {
+    if (state == SampleState::IDLE) {
+      docSend["error"] = true;
+      JsonVariant hour_variant = root["hour"];
+      JsonVariant minute_variant = root["minute"];
+      if (hour_variant.isNull() or minute_variant.isNull() ) {
+        docSend["msg"] = "Missing hour/minute";
+        return;
+      }
+      int hour = root["hour"];
+      if (hour < -1 || hour >= 24) {
+        docSend["msg"] = "Hour must be in 24h format, -1 to disable";
+        return;
+      }
+      int minute = root["minute"];
+      if (minute < -1 || minute >= 60) {
+        docSend["msg"] = "Minute must be -1<min<60, -1 to disable";
+        return;
+      }
+      docSend["error"] = false;
+      config.myConf.resetHour = hour;
+      config.myConf.resetMinute = minute;
+      if (config.myConf.resetHour < 0)  snprintf(command, COMMAND_MAX_SIZE, "Disabled daily restart");
+      else snprintf(command, COMMAND_MAX_SIZE, "Set daily restart to: %02i:%02i:00", hour, minute);
+      docSend["msg"] = command;
+      config.store();
+    } else {
+      setBusyResponse();
+      docSend["msg"] = response;
+      docSend["state"] = "busy";
+    }
+  }
+  /*********************** ADE 9k Interface ****************************/
+  // e.g. {"cmd":"dailyRestart","hour":0,"minute":0}
+  else if (strcmp(cmd, CMD_ADE) == 0) {
+    const char * addr = root["address"];
+    const char * val = root["write"];
+    JsonVariant size_variant = root["size"];
+    if (not addr) {
+      docSend["msg"] = "Missing Register address";
+      return;
+    }
+    if (size_variant.isNull()) {
+      docSend["msg"] = "Missing Size, 16 or 32 Bit";
+      return;
+    }
+    int size = root["size"];
+    if (strlen(addr) < 3 or addr[0] != '0' or addr[1] != 'x') {
+      docSend["what"] = addr;
+      docSend["msg"] = "Register values should be hex strings (e.g. 0xab)";
+      return;
+    }
+    uint16_t address = strtol( &addr[2], NULL, 16);
+    response = "";
+    uint32_t result = ade9k.readRegister(address, size);
+    uint32_t newValue, newResult; 
+    if (val) {
+      if (strlen(val) < 3 or val[0] != '0' or val[1] != 'x') {
+        docSend["what"] = val;
+        docSend["msg"] = "Register values should be hex strings (e.g. 0xab)";
+        return;
+      }
+      newValue = strtol( &val[2], NULL, 16);
+      ade9k.writeRegister(address, newValue, size);
+      newResult = ade9k.readRegister(address, size);
+      docSend["newRegValue"] = newResult;
+    }
+    // root doc uses command as storage, so changing command is not allowed before extracting
+    // all content from it
+    snprintf(command, COMMAND_MAX_SIZE, "Addr: 0x%04x, Read: 0x%04x", address, result);
+    response += command;
+    if (val) {
+      snprintf(command, COMMAND_MAX_SIZE, ", Write: 0x%04x, Re-Read: 0x%04x", newValue, newResult);
+      response += command;
+    }
+    docSend["msg"] = response;
+    docSend["regValue"] = result;
+    docSend["error"] = false;
+  }
+  /*********************** UNKNOWN COMMAND ****************************/
+  else {
+    response = "unknown command";
+    docSend["msg"] = response;
+    logger.log(WARNING, "Received unknown command");
   }
 }
 
@@ -803,18 +943,23 @@ void mqttCallback(char* topic, byte* message, unsigned int length) {
     if(strcmp(command, "v") == 0) {
       ade9k.readVoltageRMS(&value[0]);
       sprintf(unit, "V");
-    }
-    else if(strcmp(command, "i") == 0) {
+    } else if(strcmp(command, "i") == 0) {
       ade9k.readCurrentRMS(&value[0]);
       sprintf(unit, "mA");
-    }
-    else if(strcmp(command, "q") == 0) {
+    } else if(strcmp(command, "q") == 0) {
       ade9k.readReactivePower(&value[0]);
       sprintf(unit, "var");
-    }
-    else if(strcmp(command, "s") == 0) {
+    } else if(strcmp(command, "s") == 0) {
       ade9k.readApparentPower(&value[0]);
       sprintf(unit, "VA");
+    // default is active power
+    } else if(strcmp(command, "e") == 0) {
+      double valued[3] = {0.0};
+      ade9k.readActiveEnergy(&valued[0]);
+      for (int i = 0; i < 3; i++) {
+        value[i] += (float)(valued[i] + config.myConf.energy[i])/1000.0;
+      }
+      snprintf(unit, MAX_UNIT_STR_LENGTH, "kWh");
     // default is active power
     } else {
       ade9k.readActivePower(&value[0]);
@@ -833,6 +978,4 @@ void mqttCallback(char* topic, byte* message, unsigned int length) {
     logger.log(response.c_str());
     mqtt.publish(mqttTopicPubInfo, response.c_str());
   }
-  // response = "";
-  // command[0] = '\0';
 }

@@ -29,6 +29,8 @@ void IRAM_ATTR isr_adc_ready();
 void IRAM_ATTR sqwvTriggered(void* instance);
 void ntpSynced();
 
+void logFunc(const char * log, ...);
+
 // Serial logger
 StreamLogger serialLog((Stream*)&Serial, &timeStr, &LOG_PREFIX_SERIAL[0], ALL);
 // SPIFFS logger
@@ -41,7 +43,7 @@ MultiLogger& logger = MultiLogger::getInstance();
 Configuration config;
 
 Rtc rtc(RTC_INT, SDA, SCL);
-TimeHandler myTime(config.timeServer, LOCATION_TIME_OFFSET, &rtc, &ntpSynced);
+TimeHandler myTime(config.myConf.timeServer, LOCATION_TIME_OFFSET, &rtc, &ntpSynced);
 
 // ADE900 Object
 ADE9000 ade9k(ADE_RESET_PIN, ADE_DREADY_PIN, ADE_PM1_PIN, ADE_SPI_BUS);
@@ -244,8 +246,10 @@ void setup() {
   digitalWrite(ERROR_LED, LOW);
 
   // Setup ADE9000
+  ade9k._logFunc = &logFunc;
   ade9k.initSPI(ADE_SCK, ADE_MISO, ADE_MOSI, ADE_CS);
   success = ade9k.init(&isr_adc_ready);
+  ade9k.setCalibration(&config.myConf.calibration[0]);
   if (!success) logger.log(ERROR, "ADE Init Failed");
   successAll &= success;
   
@@ -254,17 +258,22 @@ void setup() {
   logger.log(ALL, "Connecting Network");
 
   // Init network connection
-  Network::init(&config.netConf, onNetworkConnect, onNetworkDisconnect, false, &logger);
+  Network::init(&config.netConf, onNetworkConnect, onNetworkDisconnect, true, &logger);
   Network::initPHY(ETH_ADDR, ETH_POWER_PIN, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_TYPE, ETH_CLK_MODE);
   setupOTA();
 
   response.reserve(2*COMMAND_MAX_SIZE);
 
   // Set mqtt and callbacks
-  mqtt.init(config.mqttServer, config.netConf.name);
+  mqtt.init(config.myConf.mqttServer, config.netConf.name);
   mqtt.onConnect = &onMQTTConnect;
   mqtt.onDisconnect = &onMQTTDisconnect;
   mqtt.onMessage = &mqttCallback;
+
+  // Init daily reset task handle
+  initDailyReset();
+  // Accumulation of energy
+  initEnergyHandler();
 
   timer_init();
 
@@ -284,6 +293,8 @@ void setup() {
 
 /************************ Loop *************************/
 void loop() {
+  // Arduino OTA
+  ArduinoOTA.handle();
   // We don't do anything else while updating
   if (updating) return;
 
@@ -334,6 +345,15 @@ void loop() {
   yield();
 }
 
+
+void logFunc(const char * log, ...) {
+  va_list args;
+  va_start(args, log);
+  vsnprintf(command, COMMAND_MAX_SIZE, log, args);
+  va_end(args);
+  logger.log(command);
+}
+
 /****************************************************
  * What todo independent of sampling state
  ****************************************************/
@@ -362,9 +382,8 @@ void onIdleOrSampling() {
   }
 
   // Handle tcp clients connections
-
-  if ((long)(millis() - tcpUpdate) >= 0) {
-    tcpUpdate += TCP_UPDATE_INTERVAL;
+  if (millis() - tcpUpdate > TCP_UPDATE_INTERVAL) {
+    tcpUpdate = millis();
     // Handle disconnect
     for (size_t i = 0; i < MAX_CLIENTS; i++) {
       if (clientConnected[i] and !client[i].connected()) {
@@ -385,9 +404,6 @@ void onIdleOrSampling() {
  * Things todo regularly if we are not sampling
  ****************************************************/
 void onIdle() {
-
-  // Arduino OTA
-  ArduinoOTA.handle();
   
   spiffsLog.flush();
 
@@ -400,26 +416,28 @@ void onIdle() {
     //MDNS.addService("_elec", "_tcp", STANDARD_TCP_STREAM_PORT);
   }
 
-  if ((long)(millis() - rtcUpdate) >= 0) {
-    rtcUpdate += RTC_UPDATE_INTERVAL;
-    if ((long)(millis() - rtcUpdate) >= 0) rtcUpdate = millis() + RTC_UPDATE_INTERVAL; 
+  if (millis() - rtcUpdate > RTC_UPDATE_INTERVAL) {
+    rtcUpdate = millis();
     if (rtc.connected) rtc.update();
   }
-    
-  // Update lifeness only on idle every second
-  if ((long)(millis() - lifenessUpdate) >= 0) {
-    lifenessUpdate += LIFENESS_UPDATE_INTERVAL;
-    if ((long)(millis() - lifenessUpdate) >= 0) lifenessUpdate = millis() + LIFENESS_UPDATE_INTERVAL; 
+
+  #ifdef SENT_LIFENESS_TO_CLIENTS
+    // Update lifeness only on idle every second
+  if (millis() - lifenessUpdate > LIFENESS_UPDATE_INTERVAL) {
+    lifenessUpdate = millis();
+    #ifdef REPORT_ENERGY_ON_LIFENESS
+    sendStatus(true, false);
+    #else
     logger.log("");
+    #endif
   }
+  #endif
 
   // Update stuff over mqtt
   if (mqtt.connected()) {
-    if ((long)(millis() - mqttUpdate) >= 0) {
-      mqttUpdate += MQTT_UPDATE_INTERVAL;
-      // On long time no update, avoid multiupdate
-      if ((long)(millis() - mqttUpdate) >= 0) mqttUpdate = millis() + MQTT_UPDATE_INTERVAL; 
-      sendStatusMQTT();
+    if (millis() - mqttUpdate > MQTT_UPDATE_INTERVAL) {
+      mqttUpdate = millis();
+      sendStatus(false, true);
     }
   }
   
@@ -464,38 +482,61 @@ void onIdle() {
 /****************************************************
  * Send Status info over mqtt 
  ****************************************************/
-void sendStatusMQTT() {
+void sendStatus(bool viaLogger, bool viaMQTT) {
   JsonObject obj = docSend.to<JsonObject>();
   obj.clear();
-
   float value = 0.0;
-
-
   
-  ade9k.readActivePower(&values[0]);
-  value = values[0]+values[1]+values[2];
+  // Read Active Power
+  float power[3] = {0.0};
+  ade9k.readActivePower(&power[0]);
+  value = power[0]+power[1]+power[2];
   docSend["power"] = round2<float>(value);
 
-  // We want current in A
-  ade9k.readCurrentRMS(&values[0]);
-  value = values[0]+values[1]+values[2]+values[3];
-  docSend["current"] = round2<float>(value/1000.0);
+  // Read Active Energy
+  double energies[3] = {0.0};
+  ade9k.readActiveEnergy(&energies[0]);
+  for (int i = 0; i < 3; i++) config.myConf.energy[i] += energies[i];
+  value = config.myConf.energy[0]+config.myConf.energy[1]+config.myConf.energy[2];
+  docSend["energy"] = round2<float>(value/1000.0); // to kWh
 
-  // unit is watt hours and we want kwj
-  // TODO: This needs some major reworking
-  // ade9k.readActiveEnergy(&data[0], &logger);
-  // docSend["energy"] = value;
+  // Read RMS current
+  float current[3] = {0.0};
+  ade9k.readCurrentRMS(&current[0]);
+  value = current[0]+current[1]+current[2]+current[3];
+  docSend["current"] = round2<float>(value/1000.0); // to A
 
   // use avg voltage here
-  ade9k.readVoltageRMS(&values[0]);
-  value = (values[0]+values[1]+values[2])/3.0;
+  float voltage[3] = {0.0};
+  ade9k.readVoltageRMS(&voltage[0]);
+  value = (voltage[0]+voltage[1]+voltage[2])/3.0;
   docSend["volt"] = round2<float>(value);
   
   docSend["ts"] = myTime.timestampStr(true);
+
+  #ifdef REPORT_INDIVIDUAL_GRID_LINE_VALUES
+  docSend["v_l1"] = round2<float>(voltage[0]);
+  docSend["v_l2"] = round2<float>(voltage[1]);
+  docSend["v_l3"] = round2<float>(voltage[2]);
+  docSend["i_l1"] = round2<float>(current[0]/1000.0);
+  docSend["i_l2"] = round2<float>(current[1]/1000.0);
+  docSend["i_l3"] = round2<float>(current[2]/1000.0);
+  docSend["p_l1"] = round2<float>(power[0]);
+  docSend["p_l2"] = round2<float>(power[1]);
+  docSend["p_l3"] = round2<float>(power[2]);
+  docSend["e_l1"] = round2<double>(config.myConf.energy[0]/1000.0);
+  docSend["e_l2"] = round2<double>(config.myConf.energy[1]/1000.0);
+  docSend["e_l3"] = round2<double>(config.myConf.energy[2]/1000.0);
+  #endif
+
   response = "";
   serializeJson(docSend, response);
-  logger.log("MQTT msg: %s", response.c_str());
-  mqtt.publish(mqttTopicPubSample, response.c_str());
+  
+  if (viaLogger) logger.log("%s", response.c_str());
+  if (viaMQTT) {
+    mqtt.publish(mqttTopicPubSample, response.c_str());
+    // logger.log("sending to topic: %s, msg: %s", mqttTopicPubSample, response.c_str());
+  }
 }
 
 /****************************************************
@@ -514,14 +555,31 @@ void sendDeviceInfo(Stream * sender) {
   docSend["sys_time"] = myTime.timeStr();
   docSend["name"] = config.netConf.name;
   docSend["ip"] = Network::localIP().toString();
-  docSend["mqtt_server"] = config.mqttServer;
-  docSend["stream_server"] = config.streamServer;
-  docSend["time_server"] = config.timeServer;
+  docSend["mqtt_server"] = config.myConf.mqttServer;
+  docSend["stream_server"] = config.myConf.streamServer;
+  docSend["time_server"] = config.myConf.timeServer;
   docSend["sampling_rate"] = streamConfig.samplingRate;
   docSend["buffer_size"] = ringBuffer.getSize();
   docSend["psram"] = ringBuffer.inPSRAM();
   docSend["rtc"] = rtc.connected;
   docSend["state"] = state != SampleState::IDLE ? "busy" : "idle";
+
+  JsonArray enArray = docSend.createNestedArray("energy");
+  for (int i = 0; i < 3; i++) enArray.add(config.myConf.energy[i]);
+
+  snprintf(command, COMMAND_MAX_SIZE, "[%.4f, %.4f, %.4f]", 
+    config.myConf.energy[0], config.myConf.energy[1], config.myConf.energy[2]);
+  docSend["energy"] = command;
+  if (config.myConf.resetHour < 0) {
+    snprintf(command, COMMAND_MAX_SIZE, "None");
+  } else {
+    snprintf(command, COMMAND_MAX_SIZE, "@%02i:%02i:00", config.myConf.resetHour, config.myConf.resetMinute);
+  }
+  docSend["dailyReset"] = command;
+  JsonArray calArray = docSend.createNestedArray("calibration");
+  for (int i = 0; i < 6; i++) calArray.add(config.myConf.calibration[i]);
+  logger.log("%.2f", config.myConf.calibration[0]);
+  logger.log("%.2f", config.myConf.calibration[5]);
   String ssids = "[";
   for (size_t i = 0; i < config.netConf.numAPs; i++) {
     ssids += config.netConf.SSIDs[i];
@@ -777,7 +835,6 @@ void onNetworkConnect() {
     
     // The stuff todo if we have a network connection (and hopefully internet as well)
     myTime.updateNTPTime();
-    mqttUpdate = millis() + MQTT_UPDATE_INTERVAL;
     if (!mqtt.connect()) logger.log(ERROR, "Cannot connect to MQTT Server %s", mqtt.ip);
   } else {
     logger.log(ALL, "Network AP Opened");
@@ -835,7 +892,7 @@ void onClientConnect(WiFiClient &newClient) {
  * We must remove the logger
  ****************************************************/
 void onClientDisconnect(WiFiClient &oldClient, int i) {
-  logger.log("Client discconnected %s port %u", oldClient.remoteIP().toString().c_str(), oldClient.remotePort());
+  logger.log("Client disconnected %s port %u", oldClient.remoteIP().toString().c_str(), oldClient.remotePort());
   logger.removeLogger(streamLog[i]);
   streamLog[i]->_stream = NULL;
 }
@@ -1540,56 +1597,6 @@ void timer_init() {
 
 
 /****************************************************
- * Check streamserver connection, sicne connect is 
- * a blocking task, we make it nonblocking using 
- * a separate freerots task
- ****************************************************/
-TaskHandle_t streamServerTaskHandle = NULL;
-void checkStreamServer(void * pvParameters) {
-  bool first = true;
-  while (not updating) {
-    if (!exStreamServer.connected()                         // If not already connected
-        and state == SampleState::IDLE                      // and in idle mode
-        and Network::connected and not Network::apMode      // Network is STA mode
-        and strcmp(config.streamServer, NO_SERVER) != 0) {  // and server is set
-      if (exStreamServer.connect(config.streamServer, STANDARD_TCP_STREAM_PORT, 5)) { // Connect with 2 seconds timeout
-        // Timeout must be large enough for handshare, otherwise server says connected but esp not
-        logger.log("Connected to StreamServer: %s", config.streamServer);
-        onClientConnect(exStreamServer);
-      } else {
-        if (first) {
-          logger.log(WARNING, "Cannot connect to StreamServer: %s", config.streamServer);
-          first = false;
-        }
-      }
-    } 
-    vTaskDelay(STREAM_SERVER_UPDATE_INTERVAL);
-  }
-  vTaskDelete(streamServerTaskHandle); // destroy this task 
-}
-
-/****************************************************
- * Init an external server to which data is streamed 
- * automatically if it is there. Enable checker 
- ****************************************************/
-void initStreamServer() {
-  if (strcmp(config.streamServer, NO_SERVER) != 0 and !exStreamServer.connected()) {
-    logger.log("Try to connect Stream Server: %s", config.streamServer);
-    // exStreamServer.connect(config.streamServer, STANDARD_TCP_STREAM_PORT);
-    // Handle reconnects
-    if (streamServerTaskHandle == NULL) {
-      xTaskCreate(
-            checkStreamServer,   /* Function to implement the task */
-            "streamServerTask", /* Name of the task */
-            10000,      /* Stack size in words */
-            NULL,       /* Task input parameter */
-            1,          /* Priority of the task */
-            &streamServerTaskHandle);  /* Task handle */
-    }
-  }
-}
-
-/****************************************************
  * Init the MDNs name from eeprom, only the number ist
  * stored in the eeprom, construct using prefix.
  ****************************************************/
@@ -1606,6 +1613,132 @@ void initMDNS() {
   }
   MDNS.addService("_elec", "_tcp", STANDARD_TCP_STREAM_PORT);
 }
+
+void storeEnergy() {
+  double energies[3] = {0.0};
+  ade9k.readActiveEnergy(&energies[0]);
+  for (int i = 0; i < 3; i++)  energies[i] += config.myConf.energy[i];
+  // logger.log("Updating energy - L1: %.2fWh + %.2fWh, L2: %.2fWh + %.2fWh, L3: %.2fWh + %.2fWh", 
+  //     config.myConf.energy[0], energies[0],
+  //     config.myConf.energy[1], energies[1],
+  //     config.myConf.energy[2], energies[2]);
+  config.setEnergy(energies[0], energies[1], energies[2]);
+}
+/****************************************************
+ * Update energy handler
+ ****************************************************/
+TaskHandle_t updateEnergyTask = NULL;
+void updateEnergy(void * pvParameters) {
+  while (not updating) {
+    if (state == SampleState::IDLE) storeEnergy();
+    vTaskDelay(ENERGY_UPDATE_INTERVAL);
+  }
+  vTaskDelete(updateEnergyTask); // destroy this task 
+}
+
+/****************************************************
+ * Init update energy handler
+ ****************************************************/
+void initEnergyHandler() {
+  if (updateEnergyTask == NULL) {
+    xTaskCreate(
+          updateEnergy,   /* Function to implement the task */
+          "updateEnergy", /* Name of the task */
+          8000,      /* Stack size in words */
+          NULL,       /* Task input parameter */
+          1,          /* Priority of the task */
+          &updateEnergyTask);  /* Task handle */
+  }
+}
+
+/****************************************************
+ * Check daily reset time each minute
+ ****************************************************/
+TaskHandle_t dailyResetTask = NULL;
+void checkDailyReset(void * pvParameters) {
+  while (not updating) {
+    // Wait at least till the beginning of the next minute
+    // If time not valid yet, it will wait 60s
+    vTaskDelay((60-myTime.second()+1)*1000);
+    // logger.log("Checking daily restart!");
+    if (myTime.valid() and myTime.hour() == config.myConf.resetHour) {
+      if (myTime.minute() == config.myConf.resetMinute) {
+        if (updating) continue; // Prevent restart on update
+        storeEnergy();
+        logger.log("Daily restart now!");
+        delay(1000); // So that log message is send out.
+        ESP.restart();
+      }
+    }
+  }
+  vTaskDelete(dailyResetTask); // destroy this task 
+}
+
+/****************************************************
+ * Init daily reset
+ ****************************************************/
+void initDailyReset() {
+  if (dailyResetTask == NULL) {
+    xTaskCreate(
+          checkDailyReset,   /* Function to implement the task */
+          "checkDailyReset", /* Name of the task */
+          8000,      /* Stack size in words */
+          NULL,       /* Task input parameter */
+          1,          /* Priority of the task */
+          &dailyResetTask);  /* Task handle */
+  }
+}
+
+/****************************************************
+ * Check streamserver connection, sicne connect is 
+ * a blocking task, we make it nonblocking using 
+ * a separate freerots task
+ ****************************************************/
+TaskHandle_t streamServerTaskHandle = NULL;
+void checkStreamServer(void * pvParameters) {
+  bool first = true;
+  while (not updating) {
+    if (!exStreamServer.connected()                         // If not already connected
+        and state == SampleState::IDLE                      // and in idle mode
+        and Network::connected and not Network::apMode      // Network is STA mode
+        and strcmp(config.myConf.streamServer, NO_SERVER) != 0) {  // and server is set
+      if (exStreamServer.connect(config.myConf.streamServer, STANDARD_TCP_STREAM_PORT, 5)) { // Connect with 2 seconds timeout
+        // Timeout must be large enough for handshare, otherwise server says connected but esp not
+        logger.log("Connected to StreamServer: %s", config.myConf.streamServer);
+        onClientConnect(exStreamServer);
+      } else {
+        if (first) {
+          logger.log(WARNING, "Cannot connect to StreamServer: %s", config.myConf.streamServer);
+          first = false;
+        }
+      }
+    } 
+    vTaskDelay(STREAM_SERVER_UPDATE_INTERVAL);
+  }
+  vTaskDelete(streamServerTaskHandle); // destroy this task 
+}
+
+/****************************************************
+ * Init an external server to which data is streamed 
+ * automatically if it is there. Enable checker 
+ ****************************************************/
+void initStreamServer() {
+  if (strcmp(config.myConf.streamServer, NO_SERVER) != 0 and !exStreamServer.connected()) {
+    logger.log("Try to connect Stream Server: %s", config.myConf.streamServer);
+    // exStreamServer.connect(config.myConf.streamServer, STANDARD_TCP_STREAM_PORT);
+    // Handle reconnects
+    if (streamServerTaskHandle == NULL) {
+      xTaskCreate(
+            checkStreamServer,   /* Function to implement the task */
+            "streamServerTask", /* Name of the task */
+            10000,      /* Stack size in words */
+            NULL,       /* Task input parameter */
+            1,          /* Priority of the task */
+            &streamServerTaskHandle);  /* Task handle */
+    }
+  }
+}
+
 
 /****************************************************
  * Subscribe to the mqtt topics we want to listen
@@ -1654,8 +1787,9 @@ void printInfoString() {
     logger.log("No RTC");
   }
   logger.append("Known Networks: [");
-  for (size_t i = 0; i < config.netConf.numAPs; i++) {
-    logger.append("%s%s", config.netConf.SSIDs[i], i < config.netConf.numAPs-1?", ":"");
+  for (size_t i = 0; i < max((int)config.netConf.numAPs, MAX_WIFI_APS); i++) {
+    snprintf(command, MAX_NETWORK_LEN, "%s", config.netConf.SSIDs[i]);
+    logger.append("%s%s", command, i < config.netConf.numAPs-1?", ":"");
   }
   logger.flushAppended();
 }
@@ -1733,6 +1867,7 @@ void setupOTA() {
   // ArduinoOTA.setPasswordHash("21232f297a57a5a743894a0e4a801fc3");
 
   ArduinoOTA.onStart([]() {
+    storeEnergy();
     updating = true;
     Network::allowNetworkChange = false;
     logger.log("Start updating");
@@ -1740,22 +1875,6 @@ void setupOTA() {
     if (state != SampleState::IDLE) {
       logger.log(WARNING, "Stop Sampling, Update Requested");
       stopSampling();
-
-      // // Write remaining chunks with tailr
-      // if (outputWriter != NULL) outputWriter(true);
-      // docSend["msg"] = F("Received stop command");
-      // docSend["sample_duration"] = samplingDuration;
-      // docSend["samples"] = totalSamples;
-      // docSend["sent_samples"] = sentSamples;
-      // docSend["start_ts"] = myTime.timestampStr(streamConfig.startTs);
-      // docSend["stop_ts"] = myTime.timestampStr(streamConfig.stopTs);
-      // docSend["ip"] = WiFi.localIP().toString();
-      // docSend["avg_rate"] = totalSamples/(samplingDuration/1000.0);
-      // docSend["cmd"] = CMD_STOP;
-
-      // serializeJson(docSend, response);
-      // response = LOG_PREFIX + response;
-      // if (sendStream) sendStream->println(response);
     }
 
     // Disconnecting all connected clients

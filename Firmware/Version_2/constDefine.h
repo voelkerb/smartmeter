@@ -5,13 +5,16 @@
 #define SERIAL_SPEED 2000000
 // #define SERIAL_SPEED 3000000
 // #define DEBUG_DEEP
+
+
+#define VERSION "2.1"
+
 #define SENT_LIFENESS_TO_CLIENTS
-
-
-#define VERSION "2.0"
+#define SEND_INFO_ON_CLIENT_CONNECT
+// #define REPORT_ENERGY_ON_LIFENESS
+// #define REPORT_INDIVIDUAL_GRID_LINE_VALUES
 
 #define SEND_INFO_ON_CLIENT_CONNECT
-
 // Only allow cmds over serial if we are not sampling over tcp
 // #define CMD_OVER_SERIAL_WHILE_TCP_SAMPLING
 
@@ -36,6 +39,7 @@
 #define RTC_UPDATE_INTERVAL 30000
 #define STREAM_SERVER_UPDATE_INTERVAL 30000
 #define MQTT_UPDATE_INTERVAL 5000
+#define ENERGY_UPDATE_INTERVAL 19000
 
 // We allow a max of 3 tcp clients for performance reasons
 #define MAX_CLIENTS 3
@@ -155,7 +159,7 @@ const size_t PREFIX_SIZE = strlen(DATA_PREFIX);
 // PSRAM Buffer
 const int PS_BUF_SIZE = 3*1024*1024 + 512*1024;
 const int RAM_BUF_SIZE = 40*1024;
-#define COMMAND_MAX_SIZE 400
+#define COMMAND_MAX_SIZE 500
 
 // Communication commands
 #define CMD_SAMPLE "sample"
@@ -163,6 +167,7 @@ const int RAM_BUF_SIZE = 40*1024;
 #define CMD_FLOW "cts"
 #define CMD_STOP "stop"
 #define CMD_RESTART "restart"
+#define CMD_DAILY_RESTART "dailyRestart"
 #define CMD_FACTORY_RESET "factoryReset"
 #define CMD_BASIC_RESET "basicReset"
 #define CMD_INFO "info"
@@ -170,12 +175,15 @@ const int RAM_BUF_SIZE = 40*1024;
 #define CMD_NTP "ntp"
 #define CMD_ADD_WIFI "addWifi"
 #define CMD_REMOVE_WIFI "delWifi"
+#define CMD_RESET_ENERGY "resetEnergy"
 #define CMD_CLEAR_LOG "clearLog"
 #define CMD_GET_LOG "getLog"
 #define CMD_MQTT_SERVER "mqttServer"
 #define CMD_STREAM_SERVER "streamServer"
 #define CMD_TIME_SERVER "timeServer"
 #define CMD_LOG_LEVEL "log"
+#define CMD_CALIBRATION "calibration"
+#define CMD_ADE "ade9k"
 
 #define LOG_LEVEL_ALL "all"
 #define LOG_LEVEL_DEBUG "debug"
