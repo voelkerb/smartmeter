@@ -1,21 +1,26 @@
 /***************************************************
- Library for configuration.
+ Library for Configuration handling.
 
  Feel free to use the code as it is.
 
- Benjamin Völker, voelkerb@me.com
+ Benjamin Voelker, voelkerb@me.com
  Embedded Systems
- University of Freiburg, Institute of Informatik
+ University of Freiburg, Institute of Computer Science
  ****************************************************/
 
 #include "config.h"
+#if __has_include("privateConfig.h")
+#include "privateConfig.h"
+#endif
 
 Configuration::Configuration() {
-  sprintf(mqttServer, "");
-  sprintf(streamServer, "");
-  sprintf(timeServer, "");
+  snprintf(myConf.mqttServer, MAX_DNS_LEN, NO_SERVER);
+  snprintf(myConf.streamServer, MAX_DNS_LEN, NO_SERVER);
+  snprintf(myConf.timeServer, MAX_DNS_LEN, NO_SERVER);
+  myConf.resetHour = myConf.resetMinute = -1;
 
-  for (int i = 0; i < CALIBRATION_LEN; i++) cal[i] = 1.0;
+  for (int i = 0; i < 6; i++) myConf.calibration[i] = 1.0;
+  for (int i = 0; i < 3; i++) myConf.energy[i] = 0.0;
 }
 
 void Configuration::init() {
@@ -26,77 +31,87 @@ void Configuration::init() {
 
 void Configuration::makeDefault(bool resetName) {
   if (resetName) {
-    sprintf(netConf.name, "smartmeterX");
+    snprintf(netConf.name, MAX_NAME_LEN, "smartmeterX");
   }
   
-  sprintf(mqttServer, NO_SERVER);
-  sprintf(streamServer, NO_SERVER);
-  sprintf(timeServer, "time.google.com");
+  snprintf(myConf.mqttServer, MAX_DNS_LEN, NO_SERVER);
+  snprintf(myConf.streamServer, MAX_DNS_LEN, NO_SERVER);
+  snprintf(myConf.timeServer, MAX_DNS_LEN, "time.google.com");
 
   for (size_t i = 0; i < MAX_WIFI_APS; i++) {
-    sprintf(&netConf.SSIDs[i][0], "");
-    sprintf(&netConf.PWDs[i][0], "");
+    sprintf(&netConf.SSIDs[i][0], NO_SERVER);
+    sprintf(&netConf.PWDs[i][0], NO_SERVER);
   }
   netConf.numAPs = 0;
+  // #define in privateConfig
+  #ifdef NUM_STANDARD_WIFIS
+  for (int i = 0; i < NUM_STANDARD_WIFIS; i++) {
+    strcpy(netConf.SSIDs[netConf.numAPs], MY_STANDARD_WIFIS[i*2]);
+    strcpy(netConf.PWDs[netConf.numAPs], MY_STANDARD_WIFIS[i*2+1]);
+    netConf.numAPs++;
+  }
+  #endif
 
-  // TODO: Remove these credentials
-  strcpy(netConf.SSIDs[netConf.numAPs], "esewifi");
-  strcpy(netConf.PWDs[netConf.numAPs], "silkykayak943");
-  netConf.numAPs++;
-  strcpy(netConf.SSIDs[netConf.numAPs], "energywifi");
-  strcpy(netConf.PWDs[netConf.numAPs], "silkykayak943");
-  netConf.numAPs++;
-
-  for (int i = 0; i < CALIBRATION_LEN; i++) cal[i] = 1.0;
+  for (int i = 0; i < 6; i++) myConf.calibration[i] = 1.0f;
+  for (int i = 0; i < 3; i++) myConf.energy[i] = 0.0;
+  myConf.resetHour = myConf.resetMinute = -1;
 }
 
 void Configuration::load() {
-  if (!loadString(NAME_START_ADDRESS, netConf.name, MAX_NAME_LEN)) {
-    makeDefault();
+  uint32_t address = NAME_START_ADDRESS;
+  EEPROM.get(address, netConf);
+  // Spot invalid config
+  if (netConf.numAPs > MAX_WIFI_APS) {
+    makeDefault(false);
     store();
+    return;
   }
-  loadWiFi();
+  address += sizeof(netConf);
 
-  if (!loadString(MQTT_START_ADDRESS, mqttServer, MAX_IP_LEN)) {
-    strcpy(mqttServer, NO_SERVER);
-  }
+  EEPROM.get(address, myConf);
+  address += sizeof(myConf);
 
-  if (!loadString(STREAM_SERVER_ADDRESS, streamServer, MAX_IP_LEN)) {
-    strcpy(streamServer, NO_SERVER);
-  }
+  // sanity check
 
-  if (!loadString(TIME_SERVER_ADDRESS, timeServer, MAX_DNS_LEN)) {
-    strcpy(timeServer, NO_SERVER);
-  }
 
-  for (int i = 0; i < CALIBRATION_LEN; i++) {
-    EEPROM.get(CALIBRATION_START_ADDRESS+i*sizeof(float), cal[i]);
+  for (int i = 0; i < 6; i++) {
     // Sanity check
-    if (cal[i] < 0.1 or cal[i] > 10.0) cal[i] = 1.0;
+    if (isnan(myConf.calibration[i]) or
+        myConf.calibration[i] < 0.1 or 
+        myConf.calibration[i] > 10.0) {
+      myConf.calibration[i] = 1.0f;
+    }
   }
-  
 }
 
 void Configuration::store() {
-  storeString(NAME_START_ADDRESS, netConf.name);
-  storeWiFi();
-  storeString(MQTT_START_ADDRESS, mqttServer);
-  storeString(STREAM_SERVER_ADDRESS, streamServer);
-  storeString(TIME_SERVER_ADDRESS, timeServer);
+  uint32_t address = NAME_START_ADDRESS;
+  EEPROM.put(address, netConf);
+  address += sizeof(netConf);
+  EEPROM.put(address, myConf);
+  address += sizeof(myConf);
+  EEPROM.commit();
+}
 
-  for (int i = 0; i < CALIBRATION_LEN; i++) {
-    EEPROM.put(CALIBRATION_START_ADDRESS+i*sizeof(float), cal[i]);
-  }
+void Configuration::storeMyConf() {
+  uint32_t address = NAME_START_ADDRESS + sizeof(netConf);
+  EEPROM.put(address, myConf);
   EEPROM.commit();
 }
 
 void Configuration::setCalibration(float * values) {
-  
-  for (int i = 0; i < CALIBRATION_LEN; i++) cal[i] = values[i];
+  for (int i = 0; i < 6; i++) myConf.calibration[i] = values[i];
+  uint32_t address = NAME_START_ADDRESS + sizeof(netConf);
+  EEPROM.put(address, myConf);
+  EEPROM.commit();
+}
 
-  for (int i = 0; i < CALIBRATION_LEN; i++) {
-    EEPROM.put(CALIBRATION_START_ADDRESS+i*sizeof(float), cal[i]);
-  }
+void Configuration::setEnergy(double energyL1, double energyL2, double energyL3) {
+  myConf.energy[0] = energyL1;
+  myConf.energy[1] = energyL2;
+  myConf.energy[2] = energyL3;
+  uint32_t address = NAME_START_ADDRESS + sizeof(netConf);
+  EEPROM.put(address, myConf.energy); // TODO: Does this work?
   EEPROM.commit();
 }
 
@@ -140,71 +155,35 @@ int Configuration::addWiFi(char * ssid, char * pwd) {
 }
 
 void Configuration::loadWiFi() {
-  unsigned int address = WIFI_START_ADDRESS;
-  netConf.numAPs = 0;
-  for (int ap = 0; ap < MAX_WIFI_APS; ap++) {
-    loadString(address, netConf.SSIDs[ap], MAX_SSID_LEN);
-    if (strlen(netConf.SSIDs[ap]) == 0) break;
-    address += MAX_SSID_LEN+1;
-    loadString(address, netConf.PWDs[ap], MAX_PWD_LEN);
-    address += MAX_PWD_LEN+1;
-    netConf.numAPs++;
-  }
+  uint32_t address = NAME_START_ADDRESS;
+  EEPROM.get(address, netConf);
+
 }
 
 void Configuration::storeWiFi() {
-  unsigned int address = WIFI_START_ADDRESS;
-  for (int ap = 0; ap < MAX_WIFI_APS; ap++) {
-    storeString(address, netConf.SSIDs[ap]);
-    address += MAX_SSID_LEN+1;
-    storeString(address, netConf.PWDs[ap]);
-    address += MAX_PWD_LEN+1;
-  }
+  uint32_t address = NAME_START_ADDRESS;
+  EEPROM.put(address, netConf);
+  EEPROM.commit();
 }
 
 
 void Configuration::setMQTTServerAddress(char * serverAddress) {
-  strcpy(mqttServer, serverAddress);
-  storeString(MQTT_START_ADDRESS, mqttServer);
+  snprintf(myConf.mqttServer, MAX_DNS_LEN, serverAddress);
+  storeMyConf();
 }
 
 void Configuration::setTimeServerAddress(char * serverAddress) {
-  strcpy(timeServer, serverAddress);
-  storeString(TIME_SERVER_ADDRESS, timeServer);
+  snprintf(myConf.timeServer, MAX_DNS_LEN, serverAddress);
+  storeMyConf();
 }
 
 void Configuration::setStreamServerAddress(char * serverAddress) {
-  strcpy(streamServer, serverAddress);
-  storeString(STREAM_SERVER_ADDRESS, streamServer);
+  snprintf(myConf.streamServer, MAX_DNS_LEN, serverAddress);
+  storeMyConf();
 }
 
 void Configuration::setName(char * newName) {
-  strcpy(netConf.name, newName);
-  storeString(NAME_START_ADDRESS, netConf.name);
-}
-
-bool Configuration::loadString(unsigned int address, char * str, unsigned int max_len) {
-  bool terminated = false;
-  for (size_t i = 0; i < max_len; i++) {
-    EEPROM.get(address+i, str[i]);
-    if (str[i] == '\0') {
-      terminated = true;
-      break;
-    }
-  }
-  if (!terminated) str[0] = '\0';
-  return terminated;
-}
-
-bool Configuration::storeString(unsigned int address, char * str) {
-  uint8_t chars = strlen(str);
-  if (chars < MAX_STRING_LEN) {
-    for (uint8_t i = 0; i <= chars; i++) {
-      EEPROM.put(address+i, str[i]);
-    }
-    EEPROM.commit();
-    return true;
-  } else {
-    return false;
-  }
+  snprintf(netConf.name, MAX_DNS_LEN, newName);
+  EEPROM.put(NAME_START_ADDRESS, netConf);
+  EEPROM.commit();
 }
