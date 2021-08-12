@@ -1,21 +1,28 @@
 [submodule "Firmware/Version_2/src/time"]
 	path = Firmware/Version_2/src/time
 	url = https://github.com/voelkerb/ESP.timeHandling
+	update = merge
 [submodule "Firmware/Version_2/src/DS3231_RTC"]
 	path = Firmware/Version_2/src/DS3231_RTC
 	url = https://github.com/voelkerb/ESP.DS3231_RTC
+	update = merge
 [submodule "Firmware/Version_2/src/ringbuffer"]
 	path = Firmware/Version_2/src/ringbuffer
 	url = https://github.com/voelkerb/ringBuffer
+	update = merge
 [submodule "Firmware/Version_2/src/network"]
 	path = Firmware/Version_2/src/network
 	url = https://github.com/voelkerb/ESP.unifiedNetwork
+	update = merge
 [submodule "Firmware/Version_2/src/multiLogger"]
 	path = Firmware/Version_2/src/multiLogger
 	url = https://github.com/voelkerb/ESP.multiLogger
+	update = merge
 [submodule "Firmware/Version_2/src/mqtt"]
 	path = Firmware/Version_2/src/mqtt
 	url = https://github.com/voelkerb/ESP.simpleMQTT
+	update = merge
 [submodule "Firmware/Version_2/src/ADE9000"]
 	path = Firmware/Version_2/src/ADE9000
 	url = https://github.com/voelkerb/ADE9000
+	update = merge
