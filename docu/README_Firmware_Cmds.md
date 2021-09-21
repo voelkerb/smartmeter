@@ -22,6 +22,12 @@ We will further see how to use commands to interface with a SmartMeter.
 | CMD        | Description         
 | ------------- |-------------|
 | ["info"](#info)                                | Get basic information                        |
+| ["getPower"](#getting-energy-data)             | Get active, reactive and apparent power      |
+| ["getVoltage"](#getting-energy-data)           | Get current RMS voltage level                |
+| ["getCurrent"](#getting-energy-data)           | Get RMS current                              |
+| ["getEnergy"](#getting-energy-data)            | Get energy in Wh and time period             |
+| ["getPeriod"](#getting-energy-data)            | Get current net frequency                    |
+| ["getPhaseAngle"](#getting-energy-data)        | Get phase angle between voltage and current  |
 | ["mdns"](#name)                                | Set new mDNS and general [PowerMeter] name   |
 | ["addWifi"](#wifi)                             | Add WiFi AP                                  |
 | ["delWifi"](#wifi)                             | Remove WiFi AP                               |
@@ -171,6 +177,32 @@ Mqtt can also be used to send any command. Special topics are used to switch the
   powermeter/SmartMeter002/state/sample {"value":"228.44,228.45,229.10","unit":"V","ts":"03/08/2021 11:42:34.947"}
   ...
   ```
+
+## Getting Energy Data
+To obtain one shot measurements, several commands exist for all kinds of electrical quantities.
+All data is returned as a JSON dict with the command and the measurement's unit.
+
+* ```{"cmd":"getPower"}```\
+Returns active, reactive and apparent power.
+
+* ```{"cmd":"getVoltage"}```\
+Returns RMS voltage level.
+
+* ```{"cmd":"getCurrent"}```\
+Returns RMS current level.
+
+* ```{"cmd":"getEnergy"}```\
+  Returns energy since reset for all three supply legs. Includes time span.
+  ```bash
+  Info:{"error":false,"cmd":"getEnergy","energy":[10149.5684,5101.23238,4509.21022],"unit":"Wh","startTs":1632219770,"start":"09/20/2021 12:22:50.068","days":1}
+  ```
+
+* ```{"cmd":"getPeriod"}```\
+Get current net frequency. Resolution is 8us according to datasheet.
+
+* ```{"cmd":"getPhaseAngle"}```\
+Returns phase angle between voltage and current.
+
 
 ## Getting High Frequency Data
 Finally, to get some high frequency data out of the SmartMeters beyond whats possible using [mqtt](#mqtt), you have multiple possibilities. 
