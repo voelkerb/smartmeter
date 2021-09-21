@@ -25,11 +25,20 @@
 #include "src/ringbuffer/src/ringbuffer.h"
 #include "src/mqtt/src/mqtt.h"
 
+template < typename TOut, typename TIn >
+TOut round2( TIn value ) {
+   return static_cast<TOut>((int)(value * 100 + 0.5) / 100.0);
+}
 void IRAM_ATTR isr_adc_ready();
 void IRAM_ATTR sqwvTriggered(void* instance);
 void ntpSynced();
 
 void logFunc(const char * log, ...);
+
+const char * LOG_FILE = DEF_LOG_FILE;
+const char LOG_PREFIX_SERIAL[] = DEF_LOG_PREFIX_SERIAL;
+const char LOG_PREFIX[] = DEF_LOG_PREFIX;
+const char DATA_PREFIX[] = DEF_DATA_PREFIX;
 
 // Serial logger
 StreamLogger serialLog((Stream*)&Serial, &timeStr, &LOG_PREFIX_SERIAL[0], ALL);
@@ -164,6 +173,7 @@ unsigned int coreFreq = 0;
 // test stuff
 bool criticalMsgAvailable = false;
 portMUX_TYPE criticalMsgMux = portMUX_INITIALIZER_UNLOCKED;
+#define MAX_MQTT_PUB_TOPIC_INFO MAX_MQTT_TOPIC_LEN
 char criticalMsg[MAX_MQTT_PUB_TOPIC_INFO] = {'\0'};
 long testMillis = 0;
 long testMillis2 = 0;
@@ -188,10 +198,9 @@ TaskHandle_t xHandle = NULL;
 
 bool updating = false;
 
-char mqttTopicPubSwitch[MAX_MQTT_PUB_TOPIC_SWITCH+MAX_NAME_LEN] = {'\0'};
-char mqttTopicPubSample[MAX_MQTT_PUB_TOPIC_SAMPLE+MAX_NAME_LEN] = {'\0'};
-char mqttTopicPubInfo[MAX_MQTT_PUB_TOPIC_INFO+MAX_NAME_LEN] = {'\0'};
-
+char mqttTopicPubSwitch[MAX_MQTT_TOPIC_LEN] = {'\0'};
+char mqttTopicPubSample[MAX_MQTT_TOPIC_LEN] = {'\0'};
+char mqttTopicPubInfo[MAX_MQTT_TOPIC_LEN] = {'\0'};
 
 // HW Timer and mutex for sapmpling ISR
 hw_timer_t * timer = NULL;
@@ -328,18 +337,6 @@ void loop() {
       streamConfig.countdown = 0;
     }
   }
-
-  // if (criticalMsgAvailable) {
-  //   portENTER_CRITICAL(&criticalMsgMux);
-  //   criticalMsgAvailable = false;
-  //   portEXIT_CRITICAL(&criticalMsgMux);
-  //   if (not firstSqwv and testMillis2 > 1050) {
-  //     logger.log(ERROR, "Sqwv took: %li ms", testMillis2);
-  //     if (firstSqwv) firstSqwv = false;
-  //   } else {
-  //     logger.log(INFO, "Sqwv took: %li ms", testMillis2);
-  //   }
-  // }
 
   // Watchdog
   yield();
@@ -578,8 +575,6 @@ void sendDeviceInfo(Stream * sender) {
   docSend["dailyReset"] = command;
   JsonArray calArray = docSend.createNestedArray("calibration");
   for (int i = 0; i < 6; i++) calArray.add(config.myConf.calibration[i]);
-  logger.log("%.2f", config.myConf.calibration[0]);
-  logger.log("%.2f", config.myConf.calibration[5]);
   String ssids = "[";
   for (size_t i = 0; i < config.netConf.numAPs; i++) {
     ssids += config.netConf.SSIDs[i];
