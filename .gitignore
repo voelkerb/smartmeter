@@ -5,6 +5,8 @@
 
 **/*.mkv
 
+**/privateConfig.h
+
 **/tmp_*
 
 **/*.cpp.o
