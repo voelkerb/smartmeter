@@ -21,6 +21,8 @@
 
 // Include for network config
 #include "../network/src/network.h"
+#include "../time/src/timeHandling.h"
+
 
 // If you cahange any of these values, the config on all devices will be bricked
 #define MAX_STRING_LEN 25
@@ -45,6 +47,7 @@ struct __attribute__((__packed__)) MeterConfiguration {
   char timeServer[MAX_DNS_LEN] = {'\0'};    // Time Server DNS name
   int8_t resetHour = -1;                    // Perform reliability reset (hour)
   int8_t resetMinute = -1;                  // Perform reliability reset (minute) -1 to disable
+  Timestamp energyReset{0,0};               // Time when energy was reset last time
 }; 
 
 
