@@ -1,3 +1,8 @@
+// Private keys can be defined in this file
+// Create it and insert e.g. LORA or WIFI keys
+#if __has_include("privateConfig.h")
+#include "privateConfig.h"
+#endif
 
 
 // Serial Speed and DEBUG option
@@ -7,7 +12,7 @@
 // #define DEBUG_DEEP
 
 
-#define VERSION "2.1"
+#define VERSION "2.2"
 
 #define SENT_LIFENESS_TO_CLIENTS
 #define SEND_INFO_ON_CLIENT_CONNECT
@@ -44,13 +49,13 @@
 // We allow a max of 3 tcp clients for performance reasons
 #define MAX_CLIENTS 3
 
-const char * LOG_FILE = "/log.txt";
+#define DEF_LOG_FILE "/log.txt"
 
-const char LOG_PREFIX_SERIAL[] = "Info:";
-const char LOG_PREFIX[] = "Info:";
+#define DEF_LOG_PREFIX_SERIAL "Info:"
+#define DEF_LOG_PREFIX "Info:"
 
-const char DATA_PREFIX[] = "Data:";
-const size_t PREFIX_SIZE = strlen(DATA_PREFIX); 
+#define DEF_DATA_PREFIX "Data:"
+#define PREFIX_SIZE strlen(DATA_PREFIX)
 
 
 // All available pins of ESP32
@@ -157,8 +162,8 @@ const size_t PREFIX_SIZE = strlen(DATA_PREFIX);
 // Buffering stuff
 #define MAX_SEND_SIZE 1024 // 512
 // PSRAM Buffer
-const int PS_BUF_SIZE = 3*1024*1024 + 512*1024;
-const int RAM_BUF_SIZE = 40*1024;
+#define PS_BUF_SIZE 3*1024*1024 + 512*1024
+#define RAM_BUF_SIZE 40*1024
 #define COMMAND_MAX_SIZE 500
 
 // Communication commands
@@ -184,6 +189,12 @@ const int RAM_BUF_SIZE = 40*1024;
 #define CMD_LOG_LEVEL "log"
 #define CMD_CALIBRATION "calibration"
 #define CMD_ADE "ade9k"
+#define CMD_GET_POWER "getPower"
+#define CMD_GET_VOLTAGE "getVoltage"
+#define CMD_GET_CURRENT "getCurrent"
+#define CMD_GET_ENERGY "getEnergy"
+#define CMD_GET_PERIOD "getPeriod"
+#define CMD_GET_PHASE "getPhaseAngle"
 
 #define LOG_LEVEL_ALL "all"
 #define LOG_LEVEL_DEBUG "debug"
@@ -239,15 +250,5 @@ const int RAM_BUF_SIZE = 40*1024;
 #define MQTT_TOPIC_CMD "cmd"
 #define MQTT_TOPIC_INFO "info"
 
-#define MAX_MQTT_TOPIC_LEN MAX_MQTT_PUB_TOPIC_SWITCH+MAX_NAME_LEN
+#define MAX_MQTT_TOPIC_LEN sizeof(MQTT_TOPIC_BASE) + sizeof(MQTT_TOPIC_STATE) + sizeof(MQTT_TOPIC_SWITCH) + 4*sizeof(MQTT_TOPIC_SEPARATOR) + 2+MAX_NAME_LEN
 
-const int MAX_MQTT_PUB_TOPIC_SWITCH = sizeof(MQTT_TOPIC_BASE) + sizeof(MQTT_TOPIC_STATE) + sizeof(MQTT_TOPIC_SWITCH) + 4*sizeof(MQTT_TOPIC_SEPARATOR) + 2;
-const int MAX_MQTT_PUB_TOPIC_SAMPLE = sizeof(MQTT_TOPIC_BASE) + sizeof(MQTT_TOPIC_STATE) + sizeof(MQTT_TOPIC_SAMPLE) + 4*sizeof(MQTT_TOPIC_SEPARATOR) + 2;
-const int MAX_MQTT_PUB_TOPIC_INFO = sizeof(MQTT_TOPIC_BASE) + sizeof(MQTT_TOPIC_STATE) + sizeof(MQTT_TOPIC_INFO) + 4*sizeof(MQTT_TOPIC_SEPARATOR) + 2;
-
-
-
-template < typename TOut, typename TIn >
-TOut round2( TIn value ) {
-   return static_cast<TOut>((int)(value * 100 + 0.5) / 100.0);
-}
