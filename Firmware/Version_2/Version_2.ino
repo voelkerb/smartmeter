@@ -271,7 +271,7 @@ void setup() {
   Network::initPHY(ETH_ADDR, ETH_POWER_PIN, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_TYPE, ETH_CLK_MODE);
   setupOTA();
 
-  response.reserve(2*COMMAND_MAX_SIZE);
+  response.reserve(3*COMMAND_MAX_SIZE);
 
   // Set mqtt and callbacks
   mqtt.init(config.myConf.mqttServer, config.netConf.name);
@@ -995,10 +995,13 @@ xQueueHandle xQueue = xQueueCreate(1000, sizeof(bool));
 bool volatile IRAM_timeout = false;
 float data[7] = {0.0};
 volatile uint8_t cntLeavoutSamples = 0;
-void IRAM_ATTR isr_adc_ready() {
+void IRAM_ATTR isr_adc_ready2() {
   // Skip this interrup if we want less samples
   cntLeavoutSamples++;
-  if (cntLeavoutSamples < leavoutSamples) return;
+  if (cntLeavoutSamples < leavoutSamples) {
+    // ade9k.leavoutMeasurement();
+    return;
+  }
   cntLeavoutSamples = 0;
   if (interruptSamples >= streamConfig.samplingRate) return;
   portENTER_CRITICAL_ISR(&intterruptSamplesMux);
@@ -1026,7 +1029,7 @@ void IRAM_ATTR isr_adc_ready() {
  * RTOS task for handling a new sample
  ****************************************************/
 bool QueueTimeout = false;
-void sample_timer_task( void * parameter) {
+void sample_timer_task2( void * parameter) {
   vTaskSuspend( NULL );  // ISR wakes up the task
 
   // We can only get all data from adc, if we want a single phase, skip the rest
@@ -1108,6 +1111,99 @@ void sample_timer_task( void * parameter) {
   vTaskDelete( NULL );
 }
 
+
+
+static SemaphoreHandle_t timer_sem_ISR;
+void IRAM_ATTR isr_adc_ready() {
+
+static BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+  xSemaphoreGiveFromISR(timer_sem_ISR, &xHigherPriorityTaskWoken);
+  
+  if ( xHigherPriorityTaskWoken) {
+    portYIELD_FROM_ISR(); // this wakes up sample_timer_task immediately
+  }
+}
+
+void IRAM_ATTR sample_timer_task( void * parameter) {
+  timer_sem_ISR = xSemaphoreCreateBinary();
+
+  // We can only get all data from adc, if we want a single phase, skip the rest
+  uint8_t offset = 0;
+  if (streamConfig.measures == Measures::VI) offset = 0;
+  else if (streamConfig.measures == Measures::VI_L1) offset = 0;
+  else if (streamConfig.measures == Measures::VI_L2) offset = 2;
+  else if (streamConfig.measures == Measures::VI_L3) offset = 4;
+
+  CurrentADC adc;
+  bool success = false;
+  long duration = micros();
+  while(state != SampleState::IDLE){
+
+    xSemaphoreTake(timer_sem_ISR, portMAX_DELAY);long start = micros();
+    // Skip this interrup if we want less samples
+    cntLeavoutSamples++;
+    if (cntLeavoutSamples < leavoutSamples) {
+      ade9k.leavoutMeasurement();
+      continue;
+    }
+    cntLeavoutSamples = 0;
+    if (interruptSamples >= streamConfig.samplingRate) {
+      ade9k.leavoutMeasurement();
+      continue;
+    }
+    portENTER_CRITICAL_ISR(&intterruptSamplesMux);
+    interruptSamples++;
+    portEXIT_CRITICAL(&intterruptSamplesMux);
+
+    counter++;
+
+    if (counter >= streamConfig.samplingRate) {
+      freqCalcNow = micros();
+      freq = freqCalcNow-freqCalcStart;
+      freqCalcStart = freqCalcNow;
+      counter = 0;
+      // logger.log("Duration: %li", duration);
+    }
+
+    int samplesToTake = 1;
+    // If we are in the middle of a second sqwv
+    if (totalSamples % streamConfig.samplingRate == 1) {
+      // samplesCorrect > 0 means we have too less samples
+      // samplesCorrect < 0 means we have too much samples
+      // If we have to coorect samples upwards
+      if (correctSamples > 0) {
+        samplesToTake++;
+        portENTER_CRITICAL_ISR(&correctionMux);
+        correctSamples--;
+        portEXIT_CRITICAL_ISR(&correctionMux);
+      } else if (correctSamples < 0) {
+        samplesToTake--;
+        portENTER_CRITICAL_ISR(&correctionMux);
+        correctSamples++;
+        portEXIT_CRITICAL_ISR(&correctionMux);
+      }
+    }    
+    // No matter what, we need to remove the sample from the fifo     
+    ade9k.readRawMeasurement(&adc);
+    ade9k.convertRawMeasurement(&adc, &data[0]);
+
+
+    // With correction, this should normally be 1
+    for (int i = 0; i < samplesToTake; i++) {
+      totalSamples++;
+
+      bool success = ringBuffer.write((uint8_t*)&(data[offset]), streamConfig.measurementBytes);
+      if (!success) {
+        uint32_t lostSamples = ringBuffer.getSize()/streamConfig.measurementBytes;
+        logger.log(ERROR, "Overflow during ringBuffer write, lost %lu samples", lostSamples);
+        ESP.restart();
+      }
+    }
+    duration = micros()-start;
+  }
+  vTaskDelete( NULL );
+}
 
 
 /****************************************************

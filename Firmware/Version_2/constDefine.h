@@ -164,7 +164,7 @@
 // PSRAM Buffer
 #define PS_BUF_SIZE 3*1024*1024 + 512*1024
 #define RAM_BUF_SIZE 40*1024
-#define COMMAND_MAX_SIZE 500
+#define COMMAND_MAX_SIZE 600
 
 // Communication commands
 #define CMD_SAMPLE "sample"
