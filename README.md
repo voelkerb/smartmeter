@@ -27,13 +27,13 @@ The firmware supports...
 You want to build your own SmartMeter? As the PCBs are provided in this repo, you can simply make your own.
 
 Depending on your requirements, you might either build [Version 1.0](/Schematic/Version_1) or [Version 2.0](/Schematic/Version_2). 
-* [Version 1.0](/Schematic/Version_1) features an ESP32 microcontroller.
+* [Version 1.0](/Schematic/Version_1)
     * Benefits: 
         * The parts are cheaper (around 50€).
     * Drawbacks:
         * Cannot stream data of more than 8kHz.
         * No ethernet interface.
-* [Version 2.0](/Schematic/Version_2) features an ESP32 microcontroller and a 16A bistable relay.
+* [Version 2.0](/Schematic/Version_2)
     * Benefits: 
         * 8MB of internal storage allows to buffer data. If you stream high frequency data at e.g. 2kHz, this can hold up to 200s of data on network dropouts.
         * An RTC keeps track of time allowing you to synchronize sampling rates during high frequency sampling.
