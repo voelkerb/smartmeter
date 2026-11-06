@@ -319,7 +319,7 @@ void loop() {
   
   // If we only have 200 ms before sampling should start, wait actively
   if (next_state != SampleState::IDLE) {
-    if (streamConfig.countdown != 0 and (streamConfig.countdown - millis()) < 200) {
+    if (streamConfig.countdown != 0 and (int32_t)(streamConfig.countdown - millis()) < 200) {
       // Disable any wifi sleep mode
       if (not Network::ethernet) esp_wifi_set_ps(WIFI_PS_NONE);
       state = next_state;
@@ -682,6 +682,8 @@ void standardConfig() {
   streamConfig.measures = Measures::VI;
   streamConfig.ip = streamClient.remoteIP();
   streamConfig.port = STANDARD_TCP_SAMPLE_PORT;
+  intSamplingRate = 8000;
+  leavoutSamples = 1;
   outputWriter = &writeChunks;
   streamConfig.measurementBytes = 8;
   streamConfig.measurementBytes = 24;
@@ -1638,14 +1640,11 @@ void startLatchedSampling(bool waitVoltage) {
   }
   // If we should wait for voltage to make positive zerocrossing
   if (waitVoltage) {
-    float values[3] = {1.0};
-    while(values[0] > 0) {
-      ade9k.readVoltageRMS(&values[0]);
-      delay(2);
-      yield();
-    }
-    while(values[0] < 0) {
-      ade9k.readVoltageRMS(&values[0]); 
+    // RMS is never negative, so only a bounded wait is possible here
+    float rms[3] = {1.0};
+    unsigned long waitStart = millis();
+    while(rms[0] > 0 and millis() - waitStart < 100) {
+      ade9k.readVoltageRMS(&rms[0]);
       delay(2);
       yield();
     }

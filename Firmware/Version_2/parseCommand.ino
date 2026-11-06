@@ -121,10 +121,10 @@ void handleJSON() {
     JsonVariant flowControlVariant = root["payload"]["flowCtr"];
     JsonVariant slotVariant = root["payload"]["slot"];
 
-    if (typeC == nullptr or rate == 0) {
+    if (typeC == nullptr or rate <= 0) {
       response = "Not a valid \"sample\" command";
       if (typeC == nullptr) response += ", \"type\" missing";
-      if (rate == 0) response += ", \"rate\" missing";
+      if (rate <= 0) response += ", \"rate\" missing or invalid";
       docSend["msg"] = response;
       return;
     }
@@ -171,8 +171,8 @@ void handleJSON() {
     // for (int i = 0; i < streamConfig.numValues; i++) array.add(0.0f);
 
     if (not latchMode) {
-      // We can only do these rates
-      if (32000%rate == 0) {
+      // We can only do these rates (leavout must fit in uint8_t)
+      if (32000%rate == 0 and rate >= 32) {
         if (rate <= 8000) intSamplingRate = 8000;
         else intSamplingRate = 32000;
         int leavout = intSamplingRate/rate;
@@ -217,9 +217,9 @@ void handleJSON() {
     } else if (strcmp(typeC, "UDP") == 0) {
       streamConfig.stream = StreamType::UDP;
       int port = docRcv["payload"]["port"].as<int>();
-      if (port > 80000 || port <= 0) {
+      if (port > 65535 || port <= 0) {
         streamConfig.port = STANDARD_UDP_PORT;
-        response = "Unsupported UDP port";
+        response = "Unsupported UDP port ";
         response += port;
         docSend["msg"] = response;
         return;
@@ -285,7 +285,7 @@ void handleJSON() {
     docSend["cmd"] = CMD_SAMPLE;
     docSend["unit"] = unitToStr(streamConfig.measures);
 
-    next_state = SampleState::SAMPLE;
+    next_state = latchMode ? SampleState::SAMPLE_LATCHED : SampleState::SAMPLE;
 
     if (ts != 0) {
       response += F("Should sample at: ");
