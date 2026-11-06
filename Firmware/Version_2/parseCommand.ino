@@ -465,10 +465,8 @@ void handleJSON() {
   // e.g. {"cmd":"stop"}
   else if (strcmp(cmd, CMD_STOP) == 0) {
     if (state == SampleState::IDLE) return;
-    // State is reset in stopSampling
-    stopSampling();
-    // Write remaining chunks with tail
-    outputWriter(true);
+    // State is reset in stopSampling, which also flushes remaining chunks
+    stopSampling(true);
     JsonObject obj = docSend.to<JsonObject>();
     obj.clear();
     docSend["msg"] = F("Received stop command");

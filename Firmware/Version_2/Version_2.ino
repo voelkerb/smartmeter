@@ -1524,6 +1524,14 @@ void IRAM_ATTR sqwvTriggered(void * instance) {
  * will send EOF to the client
  ****************************************************/
 void stopSampling() {
+  stopSampling(false);
+}
+
+/****************************************************
+ * flush: send remaining buffered data before the
+ * stream client is closed
+ ****************************************************/
+void stopSampling(bool flush) {
   if (rtc.connected) {
     disableSqwvInterrupt();
   }
@@ -1542,6 +1550,7 @@ void stopSampling() {
 
   samplingDuration = millis() - startSamplingMillis;
   streamConfig.stopTs = myTime.timestamp();
+  if (flush and outputWriter) outputWriter(true);
   if (streamClient && streamClient.connected()) streamClient.stop();
   // Reset all variables
   streamConfig.countdown = 0;
