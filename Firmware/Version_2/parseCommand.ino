@@ -1,4 +1,15 @@
 /****************************************************
+ * Returns the tcp client the current command came from
+ * or NULL if it did not come from a tcp client
+ ****************************************************/
+WiFiClient * getterClient() {
+  for (size_t i = 0; i < MAX_CLIENTS; i++) {
+    if (newGetter == (Stream*)&client[i]) return &client[i];
+  }
+  return nullptr;
+}
+
+/****************************************************
  * A request happended, handle it
  ****************************************************/
 void handleEvent(Stream * getter) {
@@ -208,7 +219,11 @@ void handleJSON() {
       outputWriter = &writeDataMQTT;
     // e.g. {"cmd":"sample", "payload":{"type":"TCP", "rate":4000}}
     } else if (strcmp(typeC, "TCP") == 0) {
-      sendClient = (WiFiClient*)newGetter;
+      sendClient = getterClient();
+      if (sendClient == nullptr) {
+        docSend["msg"] = F("TCP sampling must be requested over a tcp connection");
+        return;
+      }
       sendStream = sendClient; 
       streamConfig.stream = StreamType::TCP;
       streamConfig.port = STANDARD_TCP_SAMPLE_PORT;
@@ -227,7 +242,11 @@ void handleJSON() {
         streamConfig.port = port;
       }
       outputWriter = &writeChunksUDP;
-      sendClient = (WiFiClient*)newGetter;
+      sendClient = getterClient();
+      if (sendClient == nullptr) {
+        docSend["msg"] = F("UDP sampling must be requested over a tcp connection");
+        return;
+      }
       sendStream = sendClient; 
       docSend["port"] = streamConfig.port;
       streamConfig.ip = sendClient->remoteIP();
@@ -241,6 +260,8 @@ void handleJSON() {
       }
       if (success) {
         response = F("Connected to TCP stream");
+        sendClient = &streamClient;
+        sendStream = sendClient;
       } else {
         docSend["msg"] = F("Could not connect to TCP stream");
         return;
@@ -534,6 +555,10 @@ void handleJSON() {
   /*********************** INFO COMMAND ****************************/
   // e.g. {"cmd":"info"}
   else if (strcmp(cmd, CMD_INFO) == 0) {
+    if (newGetter == nullptr) {
+      docSend["msg"] = F("info not available over this channel");
+      return;
+    }
     sendDeviceInfo(newGetter);
     // It is already sent, prevent sending again
     JsonObject obj = docSend.to<JsonObject>();
@@ -827,6 +852,10 @@ void handleJSON() {
   // e.g. {"cmd":"getLog"}
   else if (strcmp(cmd, CMD_GET_LOG) == 0) {
     if (checkBusy()) return;
+    if (newGetter == nullptr) {
+      docSend["msg"] = F("log not available over this channel");
+      return;
+    }
     spiffsLog.flush();
     bool hasRow = spiffsLog.nextRow(&command[0]);
     newGetter->printf("%s{\"cmd\":\"log\",\"msg\":\"", &LOG_PREFIX[0]);
@@ -927,8 +956,14 @@ void handleJSON() {
  * topic we subscribed to. See mqttSubscribe function. 
  ****************************************************/
 void mqttCallback(char* topic, byte* message, unsigned int length) {
+  if (length >= COMMAND_MAX_SIZE) {
+    logger.log(ERROR, "MQTT msg too long: %u bytes", length);
+    return;
+  }
   memcpy(&command[0], message, length);
   command[length] = '\0';
+  // MQTT commands have no tcp/serial origin
+  newGetter = nullptr;
   logger.log("MQTT msg on topic: %s: %s", topic, command);
 
   // Search for last topic separator
