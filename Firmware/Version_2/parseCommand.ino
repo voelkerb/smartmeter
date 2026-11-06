@@ -390,11 +390,9 @@ void handleJSON() {
   // {"cmd": "getEnergy"}
   else if(strcmp(cmd, CMD_GET_ENERGY) == 0) {
     if (checkBusy()) return;
-    double energies[3] = {0.0};
-    ade9k.readActiveEnergy(&energies[0]);
-    for (int i = 0; i < 3; i++)  energies[i] += config.myConf.energy[i];
+    accumulateEnergy();
     JsonArray enArray = docSend.createNestedArray("energy");
-    for (int i = 0; i < 3; i++) enArray.add(energies[i]);
+    for (int i = 0; i < 3; i++) enArray.add(config.myConf.energy[i]);
     docSend["unit"] = "Wh";
     docSend["startTs"] = config.myConf.energyReset.seconds;
     docSend["start"] = myTime.timeStr(config.myConf.energyReset);
@@ -533,6 +531,7 @@ void handleJSON() {
   /*********************** RESTART COMMAND ****************************/
   // e.g. {"cmd":"restart"}
   else if (strcmp(cmd, CMD_RESTART) == 0) {
+    storeEnergy();
     ESP.restart();
   }
 
@@ -1021,12 +1020,11 @@ void mqttCallback(char* topic, byte* message, unsigned int length) {
       sprintf(unit, "VA");
     // default is active power
     } else if(strcmp(command, "e") == 0) {
-      double valued[3] = {0.0};
-      ade9k.readActiveEnergy(&valued[0]);
+      accumulateEnergy();
       for (int i = 0; i < 3; i++) {
-        value[i] += (float)(valued[i] + config.myConf.energy[i])/1000.0;
+        value[i] = (float)config.myConf.energy[i]/1000.0;
       }
-      snprintf(unit, MAX_UNIT_STR_LENGTH, "kWh");
+      snprintf(unit, sizeof(unit), "kWh");
     // default is active power
     } else {
       ade9k.readActivePower(&value[0]);

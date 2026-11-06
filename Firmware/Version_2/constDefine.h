@@ -45,6 +45,8 @@
 #define STREAM_SERVER_UPDATE_INTERVAL 30000
 #define MQTT_UPDATE_INTERVAL 5000
 #define ENERGY_UPDATE_INTERVAL 19000
+// How often energy is written to EEPROM (ms)
+#define ENERGY_STORE_INTERVAL 1800000UL
 
 // We allow a max of 3 tcp clients for performance reasons
 #define MAX_CLIENTS 3

@@ -195,6 +195,8 @@ volatile uint32_t interruptSamples = 0;
 float values[7] = {0};
 
 TaskHandle_t xHandle = NULL;
+// Guards ADE energy read-with-reset and config.myConf.energy
+SemaphoreHandle_t energyMutex = NULL;
 
 bool updating = false;
 
@@ -211,6 +213,7 @@ void (*outputWriter)(bool) = &writeChunks;
 void setup() {
   // Setup serial communication
   Serial.begin(SERIAL_SPEED);
+  energyMutex = xSemaphoreCreateMutex();
   pinMode(ERROR_LED, OUTPUT);
   digitalWrite(ERROR_LED, HIGH);
 
@@ -497,8 +500,7 @@ void sendStatus(bool viaLogger, bool viaMQTT) {
 
   // Read Active Energy
   double energies[3] = {0.0};
-  ade9k.readActiveEnergy(&energies[0]);
-  for (int i = 0; i < 3; i++) config.myConf.energy[i] += energies[i];
+  accumulateEnergy();
   value = config.myConf.energy[0]+config.myConf.energy[1]+config.myConf.energy[2];
   docSend["energy"] = round2<float>(value/1000.0); // to kWh
 
@@ -1709,24 +1711,41 @@ void initMDNS() {
   MDNS.addService("_elec", "_tcp", STANDARD_TCP_STREAM_PORT);
 }
 
-void storeEnergy() {
+// Reads ADE (read-with-reset) and adds it to the in-RAM energy
+void accumulateEnergy() {
   double energies[3] = {0.0};
+  xSemaphoreTake(energyMutex, portMAX_DELAY);
   ade9k.readActiveEnergy(&energies[0]);
-  for (int i = 0; i < 3; i++)  energies[i] += config.myConf.energy[i];
+  for (int i = 0; i < 3; i++) config.myConf.energy[i] += energies[i];
+  xSemaphoreGive(energyMutex);
+}
+
+// Accumulate and persist to EEPROM
+void storeEnergy() {
+  accumulateEnergy();
   // logger.log("Updating energy - L1: %.2fWh + %.2fWh, L2: %.2fWh + %.2fWh, L3: %.2fWh + %.2fWh", 
   //     config.myConf.energy[0], energies[0],
   //     config.myConf.energy[1], energies[1],
   //     config.myConf.energy[2], energies[2]);
-  config.setEnergy(energies[0], energies[1], energies[2]);
+  config.setEnergy(config.myConf.energy[0], config.myConf.energy[1], config.myConf.energy[2]);
 }
 /****************************************************
  * Update energy handler
  ****************************************************/
 TaskHandle_t updateEnergyTask = NULL;
 void updateEnergy(void * pvParameters) {
+  uint32_t lastStore = millis();
   while (not updating) {
-    if (state == SampleState::IDLE) storeEnergy();
-    vTaskDelay(ENERGY_UPDATE_INTERVAL);
+    if (state == SampleState::IDLE) {
+      // EEPROM wears out, persist rarely
+      if (millis() - lastStore >= ENERGY_STORE_INTERVAL) {
+        storeEnergy();
+        lastStore = millis();
+      } else {
+        accumulateEnergy();
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(ENERGY_UPDATE_INTERVAL));
   }
   vTaskDelete(updateEnergyTask); // destroy this task 
 }
