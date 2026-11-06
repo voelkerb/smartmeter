@@ -339,7 +339,7 @@ void handleJSON() {
     for (int i = 0; i < 3; i++) rpArray.add(rp[i]);
 
     float app[3] = {0.0};
-    ade9k.readReactivePower(app);
+    ade9k.readApparentPower(app);
     JsonArray appArray = docSend.createNestedArray("apparentPower");
     for (int i = 0; i < 3; i++) appArray.add(app[i]);
 
@@ -413,18 +413,19 @@ void handleJSON() {
   /*********************** Request X samples COMMAND *********************/
   else if (strcmp(cmd, CMD_REQ_SAMPLES) == 0) {
     if (state == SampleState::SAMPLE) {
-      rts = true;
       long samples = docRcv["samples"].as<long>();
-      if (samples <= 10 ||samples > 2000) {
-        response += F("stay between 10 and 100000 samples, not "); response += samples;
+      long chunk = samples*streamConfig.measurementBytes;
+      long maxSamples = MAX_SEND_SIZE/streamConfig.measurementBytes;
+      if (samples < 10 || samples > maxSamples) {
+        response = F("stay between 10 and "); response += maxSamples; response += F(" samples, not "); response += samples;
         docSend["msg"] = response;
         return;
       }
-      long chunk = samples*streamConfig.measurementBytes;
+      rts = true;
       // We don't want to send anything
       JsonObject obj = docSend.to<JsonObject>();
       obj.clear();
-      if (ringBuffer.available() < samples) {
+      if (ringBuffer.available() < chunk) {
         return;
       }
       Serial.println("Sending... ");
@@ -671,11 +672,8 @@ void handleJSON() {
       char * pwd = config.netConf.PWDs[config.netConf.numAPs-1];
       response = F("New Ap, SSID: ");
       response += name;
-      response += F(", PW: ");
-      response += pwd;
       //docSend["msg"] = sprintf( %s", name);
       docSend["ssid"] = name;
-      docSend["pwd"] = pwd;
     } else if (success == -1) {
       response = F("Wifi AP ");
       response += newSSID;
@@ -691,7 +689,7 @@ void handleJSON() {
     }
     ssids += "]";
     docSend["ssids"] = ssids;
-    if (!success != 1) return;
+    if (success != 1) return;
   }
 
   /*********************** DEl WIFI COMMAND ****************************/
@@ -735,7 +733,7 @@ void handleJSON() {
   /*********************** NTP COMMAND ****************************/
   // e.g. {"cmd":"ntp"}
   else if (strcmp(cmd, CMD_NTP) == 0) {
-    bool success = true;
+    bool success = false;
     bool bg = false;
     JsonVariant bgVariant = root["payload"]["bg"];
     if (!bgVariant.isNull()) {
@@ -743,7 +741,7 @@ void handleJSON() {
     }
     if (myTime.updateNTPTime(not bg)) {
       docSend["msg"] = "Time synced";
-      success = false;
+      success = true;
     } else {
       docSend["msg"] = "Error syncing time";
     }
