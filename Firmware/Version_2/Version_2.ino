@@ -27,7 +27,7 @@
 
 template < typename TOut, typename TIn >
 TOut round2( TIn value ) {
-   return static_cast<TOut>((int)(value * 100 + 0.5) / 100.0);
+   return static_cast<TOut>(round((double)value * 100.0) / 100.0);
 }
 void IRAM_ATTR isr_adc_ready();
 void IRAM_ATTR sqwvTriggered(void* instance);
@@ -500,7 +500,7 @@ void sendStatus(bool viaLogger, bool viaMQTT) {
   // Read RMS current
   float current[3] = {0.0};
   ade9k.readCurrentRMS(&current[0]);
-  value = current[0]+current[1]+current[2]+current[3];
+  value = current[0]+current[1]+current[2];
   docSend["current"] = round2<float>(value/1000.0); // to A
 
   // use avg voltage here
@@ -1877,7 +1877,7 @@ void printInfoString() {
     logger.log("No RTC");
   }
   logger.append("Known Networks: [");
-  for (size_t i = 0; i < max((int)config.netConf.numAPs, MAX_WIFI_APS); i++) {
+  for (size_t i = 0; i < min((int)config.netConf.numAPs, MAX_WIFI_APS); i++) {
     snprintf(command, MAX_NETWORK_LEN, "%s", config.netConf.SSIDs[i]);
     logger.append("%s%s", command, i < config.netConf.numAPs-1?", ":"");
   }
