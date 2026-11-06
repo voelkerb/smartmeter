@@ -141,7 +141,7 @@ WiFiUDP udpClient;
 
 // Stream client for external stream server
 WiFiClient exStreamServer;
-bool exStreamServerNewConnection = true;
+bool volatile exStreamServerNewConnection = true;
 
 // Command stuff send over what ever
 char command[COMMAND_MAX_SIZE] = {'\0'};
@@ -379,6 +379,11 @@ void onIdleOrSampling() {
   }
 
   // Handle tcp clients connections
+  // Stream server client connected by checkStreamServer task, handled here to stay in the loop task
+  if (exStreamServerNewConnection and exStreamServer.connected()) {
+    exStreamServerNewConnection = false;
+    onClientConnect(exStreamServer);
+  }
   if (millis() - tcpUpdate > TCP_UPDATE_INTERVAL) {
     tcpUpdate = millis();
     // Handle disconnect
@@ -1795,7 +1800,7 @@ void checkStreamServer(void * pvParameters) {
       if (exStreamServer.connect(config.myConf.streamServer, STANDARD_TCP_STREAM_PORT, 5)) { // Connect with 2 seconds timeout
         // Timeout must be large enough for handshare, otherwise server says connected but esp not
         logger.log("Connected to StreamServer: %s", config.myConf.streamServer);
-        onClientConnect(exStreamServer);
+        exStreamServerNewConnection = true;
       } else {
         if (first) {
           logger.log(WARNING, "Cannot connect to StreamServer: %s", config.myConf.streamServer);
