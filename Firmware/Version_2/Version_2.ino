@@ -107,7 +107,7 @@ struct StreamConfig {
 };
 bool rts; // ready to send
 
-int correctSamples = 0;
+volatile int correctSamples = 0;
 
 char measureStr[MAX_MEASURE_STR_LENGTH] = {'\0'};
 char unitStr[MAX_UNIT_STR_LENGTH] = {'\0'};
@@ -177,7 +177,7 @@ portMUX_TYPE criticalMsgMux = portMUX_INITIALIZER_UNLOCKED;
 char criticalMsg[MAX_MQTT_PUB_TOPIC_INFO] = {'\0'};
 long testMillis = 0;
 long testMillis2 = 0;
-uint16_t testSamples = 0;
+uint16_t volatile testSamples = 0;
 
 portMUX_TYPE correctionMux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -197,6 +197,8 @@ float values[7] = {0};
 TaskHandle_t xHandle = NULL;
 // Guards ADE energy read-with-reset and config.myConf.energy
 SemaphoreHandle_t energyMutex = NULL;
+// Samples the sqwv ISR wants appended, written by the sampling task
+volatile uint16_t padSamples = 0;
 
 bool updating = false;
 
@@ -1004,6 +1006,24 @@ xQueueHandle xQueue = xQueueCreate(1000, sizeof(bool));
 bool volatile IRAM_timeout = false;
 float data[7] = {0.0};
 volatile uint8_t cntLeavoutSamples = 0;
+
+// Append samples the sqwv ISR requested, must run in the ringbuffer writer context
+void writePadSamples() {
+  uint16_t n;
+  portENTER_CRITICAL(&sqwMux);
+  n = padSamples;
+  padSamples = 0;
+  portEXIT_CRITICAL(&sqwMux);
+  uint8_t offset = 0;
+  if (streamConfig.measures == Measures::VI_L2) offset = 2;
+  else if (streamConfig.measures == Measures::VI_L3) offset = 4;
+  for (uint16_t i = 0; i < n; i++) {
+    if (!ringBuffer.write((uint8_t*)&(data[offset]), streamConfig.measurementBytes)) {
+      logger.log(ERROR, "Cannot fill ringbuffer");
+      break;
+    }
+  }
+}
 void IRAM_ATTR isr_adc_ready2() {
   // Skip this interrup if we want less samples
   cntLeavoutSamples++;
@@ -1135,7 +1155,6 @@ static BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 }
 
 void IRAM_ATTR sample_timer_task( void * parameter) {
-  timer_sem_ISR = xSemaphoreCreateBinary();
 
   // We can only get all data from adc, if we want a single phase, skip the rest
   uint8_t offset = 0;
@@ -1149,7 +1168,11 @@ void IRAM_ATTR sample_timer_task( void * parameter) {
   long duration = micros();
   while(state != SampleState::IDLE){
 
-    xSemaphoreTake(timer_sem_ISR, portMAX_DELAY);long start = micros();
+    xSemaphoreTake(timer_sem_ISR, portMAX_DELAY);
+    // Given by stopSampling to let the task exit
+    if (state == SampleState::IDLE) break;
+    writePadSamples();
+    long start = micros();
     // Skip this interrup if we want less samples
     cntLeavoutSamples++;
     if (cntLeavoutSamples < leavoutSamples) {
@@ -1240,12 +1263,13 @@ void IRAM_ATTR latched_sample_ISR() {
  * RTOS task for sampling
  ****************************************************/
 void IRAM_ATTR latched_sample_timer_task(void *param) {
-  timer_sem = xSemaphoreCreateBinary();
 
   int test = 0;
 
   while (state != SampleState::IDLE) {
     xSemaphoreTake(timer_sem, portMAX_DELAY);
+    if (state == SampleState::IDLE) break;
+    writePadSamples();
     
     // Vaiables for frequency count
     if (counter >= streamConfig.samplingRate) {
@@ -1407,7 +1431,7 @@ void disableSqwvInterrupt() {
 }
 void disableSqwvInterruptC0( void * parameter ) {
   gpio_isr_handler_remove(rtc_int_pin);
-  gpio_uninstall_isr_service();
+  // Service is shared (e.g. ADE interrupt), do not uninstall it
   vTaskDelete(NULL); // destroy this task 
 }
 
@@ -1458,16 +1482,10 @@ void IRAM_ATTR sqwvTriggered(void * instance) {
       // TODO
       uint16_t missingSamples = streamConfig.samplingRate - testSamples;
       if (missingSamples < 5) {
-        for (int i = 0; i < missingSamples; i++) {
-          if (!ringBuffer.write((uint8_t*)&data[0], streamConfig.measurementBytes)) {
-            // TODO: Make this out of interrupt
-            portENTER_CRITICAL_ISR(&criticalMsgMux);
-            criticalMsgAvailable = true;
-            snprintf(&criticalMsg[0], MAX_MQTT_PUB_TOPIC_INFO, "Cannot fill ringbuffer");
-            portEXIT_CRITICAL_ISR(&criticalMsgMux);
-            break;
-          }
-        }
+        // Ringbuffer is not ISR safe, sampling task appends them
+        portENTER_CRITICAL_ISR(&sqwMux);
+        padSamples = missingSamples;
+        portEXIT_CRITICAL_ISR(&sqwMux);
       } else {
         // This is a serious one
       } 
@@ -1518,6 +1536,9 @@ void stopSampling() {
 
   state = SampleState::IDLE;
   next_state = SampleState::IDLE;
+  // Wake the sampling task so it can exit
+  if (timer_sem_ISR) xSemaphoreGive(timer_sem_ISR);
+  if (timer_sem) xSemaphoreGive(timer_sem);
 
   samplingDuration = millis() - startSamplingMillis;
   streamConfig.stopTs = myTime.timestamp();
@@ -1571,11 +1592,14 @@ void startSampling() {
   // Reset all variables
   state = SampleState::SAMPLE;
   sampleCB();
+  // Created once and reused, the ISR needs it before the task runs
+  if (timer_sem_ISR == NULL) timer_sem_ISR = xSemaphoreCreateBinary();
+  xSemaphoreTake(timer_sem_ISR, 0);
   xTaskCreatePinnedToCore(sample_timer_task,     /* Task function. */
         "sampleTask",       /* String with name of task. */
         4096*2,            /* Stack size in words. */
         NULL,             /* Parameter passed as input of the task */
-        32,                /* Priority of the task. */
+        configMAX_PRIORITIES - 1,                /* Priority of the task. */
         &xHandle,            /* Task handle. */
         1); // Same task as the loop
         //  Network::ethernet? 1 : 0); // On wifi use core 0 on ethernet core 1 since wifi requires core 0 to be mostly idle
@@ -1585,6 +1609,8 @@ void startSampling() {
   totalSamples = 0;
   interruptSamples = 0;
   correctSamples = 0;
+  padSamples = 0;
+  sqwvIsHigh = true;
   calcChunkSize();
   ringBuffer.reset();
   samplingDuration = 0;
@@ -1617,11 +1643,13 @@ void startLatchedSampling(bool waitVoltage) {
   // Reset all variables
   state = SampleState::SAMPLE_LATCHED;
   sampleCB();
+  if (timer_sem == NULL) timer_sem = xSemaphoreCreateBinary();
+  xSemaphoreTake(timer_sem, 0);
   xTaskCreatePinnedToCore(  latched_sample_timer_task,     /* Task function. */
     "Consumer",       /* String with name of task. */
     4096,            /* Stack size in words. */
     NULL,             /* Parameter passed as input of the task */
-    32,                /* Priority of the task. */
+    configMAX_PRIORITIES - 1,                /* Priority of the task. */
     &xHandle,            /* Task handle. */
     1);
 
@@ -1631,6 +1659,8 @@ void startLatchedSampling(bool waitVoltage) {
   sqwCounter = 0;
   sqwCounter2 = 0;
   correctSamples = 0;
+  padSamples = 0;
+  sqwvIsHigh = true;
   TIMER_CYCLES_FAST = (1000000) / streamConfig.samplingRate; // Cycles between HW timer inerrupts
   calcChunkSize();
   ringBuffer.reset();
