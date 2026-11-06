@@ -348,7 +348,7 @@ void logFunc(const char * log, ...) {
   va_start(args, log);
   vsnprintf(command, COMMAND_MAX_SIZE, log, args);
   va_end(args);
-  logger.log(command);
+  logger.log("%s", command);
 }
 
 /****************************************************
@@ -741,7 +741,7 @@ void onSampling() {
       response = "MISSED ";
       response += streamConfig.samplingRate - testSamples;
       response += " SAMPLES";
-      logger.log(ERROR, response.c_str());
+      logger.log(ERROR, "%s", response.c_str());
     }
     // If it is still > 0, our loop is too slow, 
     // reasons may be e.g. slow tcp write performance
@@ -952,7 +952,7 @@ void writeDataMQTT(bool tail) {
     for (int i = 0; i < streamConfig.numValues; i++) array.add(values[i]);
     response = "";
     serializeJson(docSample, response);
-    logger.log(response.c_str());
+    logger.log("%s", response.c_str());
     mqtt.publish(mqttTopicPubInfo, response.c_str());
     sentSamples++;
   }

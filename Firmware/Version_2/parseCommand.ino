@@ -14,7 +14,7 @@ void handleEvent(Stream * getter) {
     return;
   }
   #ifdef DEBUG_DEEP
-  logger.log(INFO, command);
+  logger.log(INFO, "%s", command);
   #endif
 
   newGetter = getter;
@@ -34,7 +34,7 @@ void handleEvent(Stream * getter) {
       getter->println(response.c_str());
 
       if ((Stream*)&Serial != getter) {
-        serialLog.log(response.c_str());
+        serialLog.log("%s", response.c_str());
       }
     }
   }
@@ -953,7 +953,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length) {
       response = "";
       serializeJson(docSend, response);
       // This might be too long for the logger
-      logger.log(response.c_str());
+      logger.log("%s", response.c_str());
       mqtt.publish(mqttTopicPubInfo, response.c_str());
     }
   }  
@@ -965,7 +965,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length) {
     docSend["ts"] = myTime.timeStr();
     response = "";
     serializeJson(docSend, response);
-    logger.log(response.c_str());
+    logger.log("%s", response.c_str());
     mqtt.publish(mqttTopicPubInfo, response.c_str());
   } 
   // Request a sample
@@ -1009,7 +1009,7 @@ void mqttCallback(char* topic, byte* message, unsigned int length) {
     docSend["ts"] = myTime.timeStr();
     response = "";
     serializeJson(docSend, response);
-    logger.log(response.c_str());
+    logger.log("%s", response.c_str());
     mqtt.publish(mqttTopicPubInfo, response.c_str());
   }
 }
