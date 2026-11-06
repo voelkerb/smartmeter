@@ -590,7 +590,7 @@ void handleJSON() {
     docSend["msg"] = response;
     docSend["mqtt_server"] = address;
     mqtt.disconnect();
-    mqtt.init(config.myConf.mqttServer, config.netConf.name);
+    mqtt.init(config.myConf.mqttServer, DEFAULT_MQTT_PORT, config.netConf.name, (char*)"", (char*)"");
     mqtt.connect();
   }
   /*********************** Stream Server COMMAND ****************************/

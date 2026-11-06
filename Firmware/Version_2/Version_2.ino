@@ -274,7 +274,7 @@ void setup() {
   response.reserve(3*COMMAND_MAX_SIZE);
 
   // Set mqtt and callbacks
-  mqtt.init(config.myConf.mqttServer, config.netConf.name);
+  mqtt.init(config.myConf.mqttServer, DEFAULT_MQTT_PORT, config.netConf.name, (char*)"", (char*)"");
   mqtt.onConnect = &onMQTTConnect;
   mqtt.onDisconnect = &onMQTTDisconnect;
   mqtt.onMessage = &mqttCallback;
